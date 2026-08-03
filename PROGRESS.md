@@ -13,17 +13,19 @@ Current focus:
 - Phase 1: Python OOP and LLD
 - Project 01: notification system
 
-Validation:
+Workspace reset:
 
-- Created a Python 3.11.7 virtual environment for project 01.
-- Installed the project in editable mode with dev dependencies.
-- Ran `pytest`: 2 tests passed.
+- Deleted the premature notification-system scaffold.
+- Removed duplicate project-local virtual environments.
+- Created one repo-level Python 3.11.7 virtual environment at `.venv`.
+- Kept an empty project folder at `projects/01-oop-lld-notifications/` so we can build from scratch.
 
 Next step:
 
-- Implement the notification system interfaces, concrete senders, and manager.
-- Run tests.
-- Refactor toward better OOP/LLD if needed.
+- Design the notification system from first principles.
+- Create production-style project structure intentionally.
+- Implement the first thin slice with tests.
+- Refactor after we understand the tradeoffs.
 
 ## Working Agreement
 

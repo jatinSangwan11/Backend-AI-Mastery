@@ -1,2 +1,0 @@
-"""Notification system practice package."""
-
