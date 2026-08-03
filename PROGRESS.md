@@ -27,6 +27,22 @@ Next step:
 - Implement the first thin slice with tests.
 - Refactor after we understand the tradeoffs.
 
+Session update:
+
+- Started Phase 1.1 on branch `Phase-1.1`.
+- Wrote the first naive implementation as a single function:
+  `projects/01-oop-lld-notifications/notification.py`.
+- Added one pytest test using `capsys` to capture printed output.
+- Installed pytest in the single repo-level `.venv`.
+- Recorded pytest in `requirements-dev.txt`.
+- Ran the test suite for project 01: 1 test passed.
+
+Current learning bottleneck:
+
+- The function works, but its only observable behavior is `print()` output.
+- Used pytest's `capsys` fixture to capture printed output and assert on it.
+- Lesson: `print()` is a side effect; side effects are testable, but they create design pressure toward cleaner behavior boundaries.
+
 ## Working Agreement
 
 - We prioritize projects over theory.
