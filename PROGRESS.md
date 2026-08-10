@@ -43,6 +43,26 @@ Current learning bottleneck:
 - Used pytest's `capsys` fixture to capture printed output and assert on it.
 - Lesson: `print()` is a side effect; side effects are testable, but they create design pressure toward cleaner behavior boundaries.
 
+Session update:
+
+- Added a second notification type: OTP over SMS.
+- Learned that Python imports execute the whole module once before selecting imported names.
+- Introduced `if __name__ == "__main__":` to keep demo/manual code from running during imports.
+- Current pressure: multiple notification functions are still fine, but repeated validation/formatting/delivery behavior may soon become uncomfortable.
+
+Session update:
+
+- Added a promotional email test using the generic email notification function.
+- Clarified the responsibility lens: mechanism vs business intent vs caller-provided data.
+- Current design idea: generic email sending can own delivery, while standard notifications may use small wrapper functions to own fixed subject/message.
+
+Session update:
+
+- Added standard welcome and password reset email functions on top of the generic email mechanism.
+- Split OTP notification into validation, SMS mechanism, and OTP orchestration responsibilities.
+- Learned not to catch validation exceptions when tests/callers need to observe them.
+- Ran project tests: 7 passed.
+
 ## Working Agreement
 
 - We prioritize projects over theory.
