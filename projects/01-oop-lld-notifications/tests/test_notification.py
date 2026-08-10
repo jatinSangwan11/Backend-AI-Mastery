@@ -63,3 +63,4 @@ def test_password_reset_email(capsys) -> None:
     
     assert "Sending email to jatin@example.com" in output
     assert "Subject: Reset your Password" in output
+    assert "Message: Here is your password reset link: dcaoni3u3i2bibini2n"

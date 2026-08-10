@@ -22,16 +22,24 @@ def send_password_reset_email(user_email: str, reset_link: str) -> None:
         message
     )
 
-def send_otp_notification(phone_no: str, otp: str) -> None:
+def validate_otp_notification(phone_no: str) -> None:
     if len(phone_no) != 10:
         raise Exception("Phone number should have a length of 10")
-    
-    print(phone_no.isdigit())
-    if(phone_no.isdigit() == False):
-        raise Exception("This is a invalid phone number")
-    print(f"Sending SMS to {phone_no}")
-    print(f"OTP: {otp}")
 
+    print(phone_no.isdigit())
+
+    if phone_no.isdigit() == False:
+        raise Exception("This is a invalid phone number")
+
+
+def send_sms_notification(phone_no: str, message: str) -> None:
+    print(f"Sending SMS to {phone_no}")
+    print(message)
+
+
+def send_otp_notification(phone_no: str, otp: str) -> None:
+    validate_otp_notification(phone_no)
+    send_sms_notification(phone_no, f"OTP: {otp}")       
 
 
 if __name__ == "__main__":
