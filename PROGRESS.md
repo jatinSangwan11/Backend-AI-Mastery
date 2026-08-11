@@ -63,6 +63,20 @@ Session update:
 - Learned not to catch validation exceptions when tests/callers need to observe them.
 - Ran project tests: 7 passed.
 
+## 2026-08-11
+
+Session update:
+
+- Clarified the shared vocabulary for the notification project: event data, stable config, mechanism, business intent, data object, and behavior object.
+- Added sender-email stable config to the email mechanism using constants.
+- Mapped sender emails by business intent:
+  - welcome email uses `MARKETING_SENDER_EMAIL`
+  - password reset email uses `SUPPORT_SENDER_EMAIL`
+  - security alert uses `SECURITY_SENDER_EMAIL`
+- Reinforced that business-intent functions decide product rules, then call lower-level mechanism functions with the required arguments.
+- Noted the next design pressure: `send_email_notification(user_email, subject, message, sender_email)` now mixes send-time data with stable config, which prepares the ground for a future `EmailSender` behavior object if more config appears.
+- Ran project tests: 8 passed.
+
 ## Working Agreement
 
 - We prioritize projects over theory.
