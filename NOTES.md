@@ -75,6 +75,35 @@ New design pressure:
 - Two notification functions are still okay.
 - Multiple notification types will start creating pressure around shared formatting, validation, and delivery behavior.
 
+## Pytest Fixtures
+
+A pytest fixture is reusable test setup.
+
+Example:
+
+```python
+@pytest.fixture
+def user() -> User:
+    return User("jatin@example.com", "8182828232", "device-token-123")
+```
+
+When pytest sees a test argument with the same name:
+
+```python
+def test_security_alert_happy_case(user, capsys) -> None:
+    send_security_alert(user)
+```
+
+it does the matching for us:
+
+```text
+test argument name -> matching fixture -> fixture return value -> used inside test
+```
+
+So pytest runs the `user` fixture function, takes the returned `User` object, and passes that object into the test as the `user` argument. We do not call `user()` inside the test because pytest has already called the fixture.
+
+Use fixtures when setup is common and boring. Create data inline when the specific value is the point of the test, such as invalid phone numbers.
+
 ## Responsibility Lens: Mechanism, Intent, Data
 
 When a function grows, ask what it owns:
