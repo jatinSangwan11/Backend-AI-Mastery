@@ -77,6 +77,24 @@ Session update:
 - Noted the next design pressure: `send_email_notification(user_email, subject, message, sender_email)` now mixes send-time data with stable config, which prepares the ground for a future `EmailSender` behavior object if more config appears.
 - Ran project tests: 8 passed.
 
+Session update:
+
+- Introduced the first behavior objects:
+  - `EmailSender`
+  - `SmsSender`
+  - `PushSender`
+- Practiced the core OOP split: stable config goes into `__init__`; event/send-time data stays as method arguments.
+- Moved phone validation into `SmsSender.send(...)` so SMS callers do not have to remember validation.
+- Added push notification support for security alerts using `device_token` on `User` and `FCM_PROVIDER` as stable config.
+- First added push naively to make `send_security_alert` visibly crowded.
+- Refactored security alert delivery behind a common `notify(user)` abstraction:
+  - `SecurityEmailAlertChannel`
+  - `SecuritySmsAlertChannel`
+  - `SecurityPushAlertChannel`
+- Learned composition through the wrapper objects: each security-alert channel has a lower-level sender.
+- Current `send_security_alert(user)` now loops over configured security-alert channels instead of knowing each channel's argument details.
+- Ran project tests: 8 passed.
+
 ## Working Agreement
 
 - We prioritize projects over theory.

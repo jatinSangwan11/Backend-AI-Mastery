@@ -202,3 +202,93 @@ send_email_notification(user_email, subject, message, sender_email)
 ```
 
 `sender_email` is stable config, while `user_email`, `subject`, and `message` are send-time details. If the email mechanism later needs more stable setup, such as `provider_name`, `api_key`, timeout, or retry config, then a configured behavior object like `EmailSender` will start to feel natural.
+
+## First Behavior Objects
+
+We introduced behavior objects when stable config started traveling with repeated behavior.
+
+Examples:
+
+- `EmailSender(sender_email, provider_name)` stores stable email setup.
+- `SmsSender(provider_name)` stores stable SMS setup and owns phone validation.
+- `PushSender(provider_name)` stores stable push setup.
+
+The repeated rule:
+
+```text
+stable setup/config -> object __init__
+event/send-time data -> method arguments
+```
+
+Example:
+
+```python
+security_email_sender = EmailSender(SECURITY_SENDER_EMAIL, AWS_SES_PROVIDER)
+
+security_email_sender.send(
+    user.email,
+    "Security Alert",
+    "New login detected on your account",
+)
+```
+
+Here `SECURITY_SENDER_EMAIL` and `AWS_SES_PROVIDER` are stable config remembered by the object. `user.email`, subject, and message are send-time data passed into the method.
+
+## Bottleneck 04: Channel-Specific Security Alert Logic
+
+After adding email, SMS, and push security alerts naively, `send_security_alert` became crowded:
+
+```python
+security_email_sender.send(user.email, subject, message)
+security_sms_sender.send(user.phone_no, message)
+security_push_sender.send(user.device_token, title, message)
+```
+
+The function worked, but it knew too much about each channel:
+
+- email needs `user.email`, subject, and message
+- SMS needs `user.phone_no` and message
+- push needs `user.device_token`, title, and message
+
+The business intent is simpler:
+
+```text
+alert this user through all configured security-alert channels
+```
+
+So we introduced security-alert channel wrappers with a common method:
+
+```python
+channel.notify(user)
+```
+
+Each wrapper hides channel-specific details:
+
+- `SecurityEmailAlertChannel` has an `EmailSender`.
+- `SecuritySmsAlertChannel` has an `SmsSender`.
+- `SecurityPushAlertChannel` has a `PushSender`.
+
+This is composition:
+
+```text
+business-specific channel object has a lower-level sender object
+```
+
+This is also abstraction:
+
+```text
+different concrete channels, same common action: notify(user)
+```
+
+Now `send_security_alert` can depend on the common action:
+
+```python
+for channel in security_alert_channels:
+    channel.notify(user)
+```
+
+Important intuition:
+
+- `EmailSender`, `SmsSender`, and `PushSender` are lower-level mechanisms.
+- `SecurityEmailAlertChannel`, `SecuritySmsAlertChannel`, and `SecurityPushAlertChannel` are business-specific wrappers for the security-alert use case.
+- Passing the whole `User` into `notify(user)` gives every channel the same method shape; each channel chooses the contact field it needs.
