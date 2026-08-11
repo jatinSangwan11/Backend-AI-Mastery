@@ -368,3 +368,69 @@ So the value is:
 ```text
 named abstraction + documented contract + better type-checker/editor help
 ```
+
+## Runtime Guards And Monkeypatch
+
+A protocol documents the contract, but plain Python does not strongly enforce it at runtime. If we want a runtime guard, we can check each configured channel before calling it:
+
+```python
+def send_security_alert(user: User) -> None:
+    for channel in security_alert_channels:
+        notify = getattr(channel, "notify", None)
+
+        if not callable(notify):
+            raise TypeError("Invalid security alert channel")
+
+        notify(user)
+```
+
+`getattr` syntax:
+
+```python
+getattr(object, attribute_name, default_value)
+```
+
+Example:
+
+```python
+notify = getattr(channel, "notify", None)
+```
+
+This means:
+
+```text
+Try to get channel.notify. If it does not exist, return None instead of raising AttributeError.
+```
+
+The `None` is not the return type of `notify`; it is only the fallback value when the attribute is missing.
+
+Then:
+
+```python
+callable(notify)
+```
+
+checks whether the value can actually be called like a function/method.
+
+To test the runtime guard, use `monkeypatch` to temporarily replace the module-level channel list:
+
+```python
+import notification
+
+def test_send_security_alert_rejects_invalid_channel(user, monkeypatch) -> None:
+    monkeypatch.setattr(notification, "security_alert_channels", ["oops"])
+
+    with pytest.raises(TypeError, match="Invalid security alert channel"):
+        send_security_alert(user)
+```
+
+Why this works:
+
+```text
+notification is a module object
+security_alert_channels is an attribute on that module object
+monkeypatch.setattr temporarily replaces that attribute for one test
+pytest restores the original value after the test
+```
+
+We replace the whole list with `["oops"]` instead of appending because the test should focus only on the invalid-channel case and avoid running real channels first.

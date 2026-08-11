@@ -143,7 +143,10 @@ def send_otp_notification(user: User, otp: str) -> None:
 
 def send_security_alert(user: User) -> None:
     for channel in security_alert_channels:
-        channel.notify(user)
+        notify = getattr(channel, "notify", None)
+        if not callable(notify):
+            raise TypeError("Invalid security alert channel")
+        notify(user)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 import pytest
 
+import notification
 from notification import EmailSender, send_otp_notification, send_password_reset_email, send_security_alert, send_welcome_email, User
 from notification import AWS_SES_PROVIDER, AWS_SNS_PROVIDER, FCM_PROVIDER, MAILGUN_PROVIDER, SECURITY_SENDER_EMAIL, MARKETING_SENDER_EMAIL, SENDGRID_PROVIDER, SUPPORT_SENDER_EMAIL, TWILIO_PROVIDER
 
@@ -99,3 +100,9 @@ def test_security_alert_happy_case(user, capsys) -> None:
     assert f"Sending push using {FCM_PROVIDER}" in output
     assert "Sending push to device-token-123" in output
     assert "Title: Security Alert" in output
+
+def test_send_security_alert_rejects_invalid_channel(user, monkeypatch) -> None:
+    monkeypatch.setattr(notification, "security_alert_channels", ["oops"])
+
+    with pytest.raises(TypeError, match="Invalid security alert channel"):
+        send_security_alert(user)

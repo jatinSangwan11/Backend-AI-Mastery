@@ -103,6 +103,14 @@ Session update:
 - Learned the distinction between runtime behavior and static typing: plain Python mostly does not enforce protocol membership at runtime, but editors/type checkers can use the contract.
 - Current reading: `security_alert_channels` is expected to contain objects that satisfy the `SecurityAlertChannel` protocol.
 
+Session update:
+
+- Discussed the runtime limitation of protocols: a bad object can still enter the list at runtime and fail only when called.
+- Added the mental model for explicit runtime guards using `getattr(channel, "notify", None)` and `callable(...)`.
+- Clarified that the `None` in `getattr(..., None)` is a fallback when the attribute is missing, not the return type of `notify`.
+- Learned how to test module-level configuration safely with `monkeypatch.setattr`.
+- Key test idea: temporarily replace `notification.security_alert_channels` with `["oops"]` to verify the invalid-channel error path, then let pytest restore the original value.
+
 ## Working Agreement
 
 - We prioritize projects over theory.
