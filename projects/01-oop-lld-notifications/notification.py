@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Protocol
 
 
 @dataclass
@@ -65,6 +66,9 @@ class PushSender:
         print(f"Title: {title}")
         print(f"Message: {message}")
 
+class SecurityAlertChannel(Protocol):
+    def notify(self, user: User) -> None:
+        ...
 
 class SecurityEmailAlertChannel:
     def __init__(self, email_sender: EmailSender) -> None:
@@ -107,7 +111,7 @@ security_email_sender = EmailSender(SECURITY_SENDER_EMAIL, AWS_SES_PROVIDER)
 
 security_push_sender = PushSender(FCM_PROVIDER)
 
-security_alert_channels = [
+security_alert_channels: list[SecurityAlertChannel] = [
     SecurityEmailAlertChannel(security_email_sender),
     SecuritySmsAlertChannel(security_sms_sender),
     SecurityPushAlertChannel(security_push_sender),

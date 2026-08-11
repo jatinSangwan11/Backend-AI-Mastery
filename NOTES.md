@@ -292,3 +292,79 @@ Important intuition:
 - `EmailSender`, `SmsSender`, and `PushSender` are lower-level mechanisms.
 - `SecurityEmailAlertChannel`, `SecuritySmsAlertChannel`, and `SecurityPushAlertChannel` are business-specific wrappers for the security-alert use case.
 - Passing the whole `User` into `notify(user)` gives every channel the same method shape; each channel chooses the contact field it needs.
+
+## Protocols And Structural Typing
+
+After security-alert channels shared the same action, we named that contract with a protocol:
+
+```python
+from typing import Protocol
+
+class SecurityAlertChannel(Protocol):
+    def notify(self, user: User) -> None:
+        ...
+```
+
+Read this as:
+
+```text
+A security alert channel is anything that can notify a user.
+```
+
+Then:
+
+```python
+security_alert_channels: list[SecurityAlertChannel] = [
+    SecurityEmailAlertChannel(security_email_sender),
+    SecuritySmsAlertChannel(security_sms_sender),
+    SecurityPushAlertChannel(security_push_sender),
+]
+```
+
+Read this as:
+
+```text
+security_alert_channels is expected to be a list of objects that satisfy the SecurityAlertChannel protocol.
+```
+
+Important distinction:
+
+- With normal inheritance, a class explicitly says it is a child of another class.
+- With a `Protocol`, a class can satisfy the contract just by having the required shape.
+
+So `SecurityEmailAlertChannel` does not need to inherit from `SecurityAlertChannel`. It satisfies the protocol because it has:
+
+```python
+def notify(self, user: User) -> None:
+    ...
+```
+
+This is structural typing:
+
+```text
+If it has the required method shape, it can be treated as that protocol.
+```
+
+Do not say:
+
+```text
+the list elements are of this exact type
+```
+
+Prefer:
+
+```text
+the list elements satisfy this protocol
+```
+
+Runtime nuance:
+
+- Plain Python mostly does not enforce this at runtime.
+- If a bad object enters the list, runtime usually fails only when `channel.notify(user)` is called.
+- The protocol mainly helps human readers, editors, and static type checkers such as mypy or pyright.
+
+So the value is:
+
+```text
+named abstraction + documented contract + better type-checker/editor help
+```
