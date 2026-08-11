@@ -43,6 +43,40 @@ Current learning bottleneck:
 - Used pytest's `capsys` fixture to capture printed output and assert on it.
 - Lesson: `print()` is a side effect; side effects are testable, but they create design pressure toward cleaner behavior boundaries.
 
+Session update:
+
+- Added a second notification type: OTP over SMS.
+- Learned that Python imports execute the whole module once before selecting imported names.
+- Introduced `if __name__ == "__main__":` to keep demo/manual code from running during imports.
+- Current pressure: multiple notification functions are still fine, but repeated validation/formatting/delivery behavior may soon become uncomfortable.
+
+Session update:
+
+- Added a promotional email test using the generic email notification function.
+- Clarified the responsibility lens: mechanism vs business intent vs caller-provided data.
+- Current design idea: generic email sending can own delivery, while standard notifications may use small wrapper functions to own fixed subject/message.
+
+Session update:
+
+- Added standard welcome and password reset email functions on top of the generic email mechanism.
+- Split OTP notification into validation, SMS mechanism, and OTP orchestration responsibilities.
+- Learned not to catch validation exceptions when tests/callers need to observe them.
+- Ran project tests: 7 passed.
+
+## 2026-08-11
+
+Session update:
+
+- Clarified the shared vocabulary for the notification project: event data, stable config, mechanism, business intent, data object, and behavior object.
+- Added sender-email stable config to the email mechanism using constants.
+- Mapped sender emails by business intent:
+  - welcome email uses `MARKETING_SENDER_EMAIL`
+  - password reset email uses `SUPPORT_SENDER_EMAIL`
+  - security alert uses `SECURITY_SENDER_EMAIL`
+- Reinforced that business-intent functions decide product rules, then call lower-level mechanism functions with the required arguments.
+- Noted the next design pressure: `send_email_notification(user_email, subject, message, sender_email)` now mixes send-time data with stable config, which prepares the ground for a future `EmailSender` behavior object if more config appears.
+- Ran project tests: 8 passed.
+
 ## Working Agreement
 
 - We prioritize projects over theory.
