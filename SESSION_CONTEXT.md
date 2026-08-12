@@ -71,11 +71,22 @@ Teaching should follow this style:
 - Jatin should type most code himself for syntax muscle memory.
 - Codex should not edit coding files unless Jatin explicitly asks.
 - Codex may update markdown notes/progress with concise revision-worthy insights.
+- Codex should preserve the Project 01 teaching pattern: naive implementation, added requirement, visible pain, refactor, vocabulary, tests, notes.
+- Do not start by naming the topic. Create or inspect the bottleneck first, then name the idea after Jatin has reasoned through it.
+- Keep asking responsibility questions: what does this function/class/module own, what does it know, and what should it not know?
+- When Jatin says a step feels too fast, slow down, discuss, and if needed revert only Codex's own last change.
+- Codex may code directly when Jatin explicitly asks, especially for mechanical refactors, test updates, note/progress updates, and module splits.
 
 Learning rule:
 
 ```text
 Pain first -> name second -> pattern/principle third.
+```
+
+Project 01 refined teaching rule:
+
+```text
+Bottleneck -> requirement pressure -> Jatin's intuition -> small code step -> test -> name the concept -> notes.
 ```
 
 ## Overall Roadmap
@@ -495,4 +506,3 @@ Continue with:
 - dependency injection
 - protocols/interfaces
 - adding a new channel cleanly
-

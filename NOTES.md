@@ -503,3 +503,105 @@ This is the pain relief that leads to dependency injection:
 stop reaching for hidden/global collaborators
 pass required collaborators into the function/object that needs them
 ```
+
+## Constructor Injection And Test Doubles
+
+When `send_security_alert` started receiving too many repeated setup arguments, we moved the workflow into a configured object:
+
+```python
+class SecurityAlertNotifier:
+    def __init__(self, configured_channels: list[SecurityAlertChannel]) -> None:
+        self.configured_channels = configured_channels
+
+    def notify(self, user: User, enabled_channels: list[str]) -> None:
+        ...
+```
+
+This is constructor injection:
+
+```text
+SecurityAlertNotifier receives its channel collaborators through __init__.
+```
+
+The split stayed consistent:
+
+```text
+stable collaborators/config -> __init__
+event/use-case data -> method arguments
+```
+
+So:
+
+- `configured_channels` belongs in `SecurityAlertNotifier.__init__`.
+- `user` and `enabled_channels` belong in `notify(...)`.
+
+This made tests cleaner. Instead of patching a global list, a test can create a local notifier with fake channels:
+
+```python
+class FakeSecurityAlertChannel:
+    def __init__(self, channel_type: str) -> None:
+        self.channel_type = channel_type
+        self.notified_users = []
+
+    def notify(self, user: User) -> None:
+        self.notified_users.append(user)
+```
+
+The fake channel records which users were notified. This lets the test assert workflow behavior directly:
+
+```python
+assert email_channel.notified_users == [user]
+assert sms_channel.notified_users == []
+assert push_channel.notified_users == [user]
+```
+
+This is a test double:
+
+```text
+a simple test-only object that stands in for a real collaborator
+```
+
+Use fake/test-double collaborators when the behavior being tested is orchestration, not the real side effect.
+
+## Module Responsibility Split
+
+When `notification.py` grew into a pile of data models, constants, senders, security-alert workflow, configured objects, and business functions, we split by responsibility:
+
+```text
+models.py          -> data shapes such as User
+constants.py       -> stable named values
+senders.py         -> low-level delivery mechanisms
+security_alerts.py -> security-alert abstraction, wrappers, notifier
+notification.py    -> wiring/configured objects and business intent functions
+```
+
+This is a module responsibility split:
+
+```text
+same behavior, clearer file ownership
+```
+
+Do not create one file per class by default. Group code by cohesive responsibility and navigation needs.
+
+## Project 01 Closing Checkpoint
+
+Project 01 started from one naive print-based function and grew through requirement pressure into a small object design.
+
+Core ideas learned:
+
+- side effects and `capsys`
+- module import behavior and `if __name__ == "__main__"`
+- event data vs stable config
+- data objects vs behavior objects
+- composition
+- protocols and structural typing
+- runtime guards
+- dependency injection
+- test doubles
+- module responsibility
+
+Weekend revision goal:
+
+```text
+For each object/module, say what responsibility it owns and what it should not know.
+```
