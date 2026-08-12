@@ -1,7 +1,7 @@
 import pytest
 
-from notification import EmailSender, send_otp_notification, send_password_reset_email, send_security_alert, send_welcome_email, User
-from notification import AWS_SES_PROVIDER, AWS_SNS_PROVIDER, FCM_PROVIDER, MAILGUN_PROVIDER, SECURITY_SENDER_EMAIL, MARKETING_SENDER_EMAIL, SENDGRID_PROVIDER, SUPPORT_SENDER_EMAIL, TWILIO_PROVIDER
+from notification import EmailSender, SecurityAlertNotifier, security_alert_notifier, send_otp_notification, send_password_reset_email, send_welcome_email, User
+from notification import AWS_SES_PROVIDER, AWS_SNS_PROVIDER, EMAIL_CHANNEL, FCM_PROVIDER, MAILGUN_PROVIDER, PUSH_CHANNEL, SECURITY_SENDER_EMAIL, MARKETING_SENDER_EMAIL, SENDGRID_PROVIDER, SMS_CHANNEL, SUPPORT_SENDER_EMAIL, TWILIO_PROVIDER
 
 # pytest automatically regonizes test_*.py / *_test.py   x
 
@@ -85,7 +85,10 @@ def test_password_reset_email(user, capsys) -> None:
 
 
 def test_security_alert_happy_case(user, capsys) -> None:
-    send_security_alert(user)
+    security_alert_notifier.notify(
+        user,
+        [EMAIL_CHANNEL, SMS_CHANNEL, PUSH_CHANNEL],
+    )
     
     output = capsys.readouterr().out 
 
@@ -99,3 +102,49 @@ def test_security_alert_happy_case(user, capsys) -> None:
     assert f"Sending push using {FCM_PROVIDER}" in output
     assert "Sending push to device-token-123" in output
     assert "Title: Security Alert" in output
+
+
+def test_security_alert_only_uses_enabled_channels(user, capsys) -> None:
+    security_alert_notifier.notify(
+        user,
+        [EMAIL_CHANNEL, PUSH_CHANNEL],
+    )
+
+    output = capsys.readouterr().out
+
+    assert f"Sending email using {AWS_SES_PROVIDER}" in output
+    assert f"Sending push using {FCM_PROVIDER}" in output
+    assert f"Sending SMS using {AWS_SNS_PROVIDER}" not in output
+    assert "Sending SMS to 8182828232" not in output
+
+
+def test_security_alert_notifier_rejects_invalid_channel(user) -> None:
+    notifier = SecurityAlertNotifier(["oops"])
+
+    with pytest.raises(TypeError, match="Invalid security alert channel"):
+        notifier.notify(
+            user,
+            [EMAIL_CHANNEL, SMS_CHANNEL, PUSH_CHANNEL],
+        )
+
+
+# this is the fake security Alert channel for testing 
+class FakeSecurityAlertChannel:
+    def __init__(self, channel_type: str) -> None:
+        self.channel_type = channel_type
+        self.notified_users = []
+
+    def notify(self, user: User) -> None:
+        self.notified_users.append(user)
+
+def test_security_alert_notifier_notifies_only_enabled_channels(user) -> None:
+    email_channel = FakeSecurityAlertChannel(EMAIL_CHANNEL)
+    sms_channel = FakeSecurityAlertChannel(SMS_CHANNEL)
+    push_channel = FakeSecurityAlertChannel(PUSH_CHANNEL)
+
+    notifier = SecurityAlertNotifier([email_channel, sms_channel, push_channel])
+    notifier.notify(user, [EMAIL_CHANNEL, PUSH_CHANNEL])
+
+    assert email_channel.notified_users == [user]
+    assert sms_channel.notified_users == []
+    assert push_channel.notified_users == [user]

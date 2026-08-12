@@ -292,3 +292,316 @@ Important intuition:
 - `EmailSender`, `SmsSender`, and `PushSender` are lower-level mechanisms.
 - `SecurityEmailAlertChannel`, `SecuritySmsAlertChannel`, and `SecurityPushAlertChannel` are business-specific wrappers for the security-alert use case.
 - Passing the whole `User` into `notify(user)` gives every channel the same method shape; each channel chooses the contact field it needs.
+
+## Protocols And Structural Typing
+
+After security-alert channels shared the same action, we named that contract with a protocol:
+
+```python
+from typing import Protocol
+
+class SecurityAlertChannel(Protocol):
+    def notify(self, user: User) -> None:
+        ...
+```
+
+Read this as:
+
+```text
+A security alert channel is anything that can notify a user.
+```
+
+Then:
+
+```python
+security_alert_channels: list[SecurityAlertChannel] = [
+    SecurityEmailAlertChannel(security_email_sender),
+    SecuritySmsAlertChannel(security_sms_sender),
+    SecurityPushAlertChannel(security_push_sender),
+]
+```
+
+Read this as:
+
+```text
+security_alert_channels is expected to be a list of objects that satisfy the SecurityAlertChannel protocol.
+```
+
+Important distinction:
+
+- With normal inheritance, a class explicitly says it is a child of another class.
+- With a `Protocol`, a class can satisfy the contract just by having the required shape.
+
+So `SecurityEmailAlertChannel` does not need to inherit from `SecurityAlertChannel`. It satisfies the protocol because it has:
+
+```python
+def notify(self, user: User) -> None:
+    ...
+```
+
+This is structural typing:
+
+```text
+If it has the required method shape, it can be treated as that protocol.
+```
+
+Do not say:
+
+```text
+the list elements are of this exact type
+```
+
+Prefer:
+
+```text
+the list elements satisfy this protocol
+```
+
+Runtime nuance:
+
+- Plain Python mostly does not enforce this at runtime.
+- If a bad object enters the list, runtime usually fails only when `channel.notify(user)` is called.
+- The protocol mainly helps human readers, editors, and static type checkers such as mypy or pyright.
+
+So the value is:
+
+```text
+named abstraction + documented contract + better type-checker/editor help
+```
+
+## Runtime Guards And Monkeypatch
+
+A protocol documents the contract, but plain Python does not strongly enforce it at runtime. If we want a runtime guard, we can check each configured channel before calling it:
+
+```python
+def send_security_alert(user: User) -> None:
+    for channel in security_alert_channels:
+        notify = getattr(channel, "notify", None)
+
+        if not callable(notify):
+            raise TypeError("Invalid security alert channel")
+
+        notify(user)
+```
+
+`getattr` syntax:
+
+```python
+getattr(object, attribute_name, default_value)
+```
+
+Example:
+
+```python
+notify = getattr(channel, "notify", None)
+```
+
+This means:
+
+```text
+Try to get channel.notify. If it does not exist, return None instead of raising AttributeError.
+```
+
+The `None` is not the return type of `notify`; it is only the fallback value when the attribute is missing.
+
+Then:
+
+```python
+callable(notify)
+```
+
+checks whether the value can actually be called like a function/method.
+
+To test the runtime guard, use `monkeypatch` to temporarily replace the module-level channel list:
+
+```python
+import notification
+
+def test_send_security_alert_rejects_invalid_channel(user, monkeypatch) -> None:
+    monkeypatch.setattr(notification, "security_alert_channels", ["oops"])
+
+    with pytest.raises(TypeError, match="Invalid security alert channel"):
+        send_security_alert(user)
+```
+
+Why this works:
+
+```text
+notification is a module object
+security_alert_channels is an attribute on that module object
+monkeypatch.setattr temporarily replaces that attribute for one test
+pytest restores the original value after the test
+```
+
+We replace the whole list with `["oops"]` instead of appending because the test should focus only on the invalid-channel case and avoid running real channels first.
+
+## Explicit Dependencies And Enabled Channels
+
+New pressure:
+
+```text
+Security alerts should only be sent through channels enabled for this user/use case.
+```
+
+This created two separate concepts:
+
+- Configured channels: what the system is capable of using for this call.
+- Enabled channels: what this user/use case allows.
+
+Example:
+
+```text
+configured channels -> email, SMS, push
+enabled channels    -> email, push
+```
+
+So `send_security_alert` now receives both explicitly:
+
+```python
+def send_security_alert(
+    user: User,
+    configured_channels: list[SecurityAlertChannel],
+    enabled_channels: list[str],
+) -> None:
+    ...
+```
+
+Important intuition:
+
+```text
+If a function needs something to do its job, make that dependency visible in the function signature.
+```
+
+Before, `send_security_alert` secretly depended on the module-level `security_alert_channels` list. That made tests patch global state with `monkeypatch`.
+
+After, tests and callers can pass the channel list directly:
+
+```python
+send_security_alert(
+    user,
+    security_alert_channels,
+    [EMAIL_CHANNEL, PUSH_CHANNEL],
+)
+```
+
+Each channel also has a stable identity:
+
+```python
+channel.channel_type
+```
+
+The function can now filter:
+
+```python
+if channel.channel_type in enabled_channels:
+    notify(user)
+```
+
+This is the pain relief that leads to dependency injection:
+
+```text
+stop reaching for hidden/global collaborators
+pass required collaborators into the function/object that needs them
+```
+
+## Constructor Injection And Test Doubles
+
+When `send_security_alert` started receiving too many repeated setup arguments, we moved the workflow into a configured object:
+
+```python
+class SecurityAlertNotifier:
+    def __init__(self, configured_channels: list[SecurityAlertChannel]) -> None:
+        self.configured_channels = configured_channels
+
+    def notify(self, user: User, enabled_channels: list[str]) -> None:
+        ...
+```
+
+This is constructor injection:
+
+```text
+SecurityAlertNotifier receives its channel collaborators through __init__.
+```
+
+The split stayed consistent:
+
+```text
+stable collaborators/config -> __init__
+event/use-case data -> method arguments
+```
+
+So:
+
+- `configured_channels` belongs in `SecurityAlertNotifier.__init__`.
+- `user` and `enabled_channels` belong in `notify(...)`.
+
+This made tests cleaner. Instead of patching a global list, a test can create a local notifier with fake channels:
+
+```python
+class FakeSecurityAlertChannel:
+    def __init__(self, channel_type: str) -> None:
+        self.channel_type = channel_type
+        self.notified_users = []
+
+    def notify(self, user: User) -> None:
+        self.notified_users.append(user)
+```
+
+The fake channel records which users were notified. This lets the test assert workflow behavior directly:
+
+```python
+assert email_channel.notified_users == [user]
+assert sms_channel.notified_users == []
+assert push_channel.notified_users == [user]
+```
+
+This is a test double:
+
+```text
+a simple test-only object that stands in for a real collaborator
+```
+
+Use fake/test-double collaborators when the behavior being tested is orchestration, not the real side effect.
+
+## Module Responsibility Split
+
+When `notification.py` grew into a pile of data models, constants, senders, security-alert workflow, configured objects, and business functions, we split by responsibility:
+
+```text
+models.py          -> data shapes such as User
+constants.py       -> stable named values
+senders.py         -> low-level delivery mechanisms
+security_alerts.py -> security-alert abstraction, wrappers, notifier
+notification.py    -> wiring/configured objects and business intent functions
+```
+
+This is a module responsibility split:
+
+```text
+same behavior, clearer file ownership
+```
+
+Do not create one file per class by default. Group code by cohesive responsibility and navigation needs.
+
+## Project 01 Closing Checkpoint
+
+Project 01 started from one naive print-based function and grew through requirement pressure into a small object design.
+
+Core ideas learned:
+
+- side effects and `capsys`
+- module import behavior and `if __name__ == "__main__"`
+- event data vs stable config
+- data objects vs behavior objects
+- composition
+- protocols and structural typing
+- runtime guards
+- dependency injection
+- test doubles
+- module responsibility
+
+Weekend revision goal:
+
+```text
+For each object/module, say what responsibility it owns and what it should not know.
+```
