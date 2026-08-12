@@ -605,3 +605,76 @@ Weekend revision goal:
 ```text
 For each object/module, say what responsibility it owns and what it should not know.
 ```
+
+## Project 02 Starting Context: Payment Provider System
+
+The payment system sits between the product/order flow and the external payment provider.
+
+Pipeline:
+
+```text
+User clicks Buy
+-> product/order system knows user, item, and price
+-> payment system receives user_id and amount
+-> payment system talks to an external provider later
+-> payment result comes back as success/failure/pending
+-> order system marks purchase paid, failed, or still waiting
+```
+
+So Project 02 is not building the product catalog, price calculation, cart, article/course ownership, or UI checkout page.
+
+Project 02 is building this responsibility:
+
+```text
+Given a valid user/payment request, try to collect money through a payment provider and report what happened.
+```
+
+Meaning of "charge a user":
+
+```text
+Ask the payment system/provider to collect an amount from that user.
+```
+
+Example:
+
+```python
+charge_payment(user_id="40", amount=500)
+```
+
+In the first toy slice, no real money moves. The function only prints:
+
+```text
+Charging user 40 amount 500
+```
+
+In a real backend, this would eventually mean:
+
+```text
+For user 40, collect amount 500 through a payment method/provider, then return or record the result.
+```
+
+Important starting expectation:
+
+```text
+Make the simplest payment action visible first.
+Notice what becomes awkward.
+Add requirements one at a time.
+Only then introduce names like provider abstraction, dependency injection, test double, or adapter.
+```
+
+Current responsibility checkpoint:
+
+```text
+charge_payment owns only the basic "start a charge for this user and amount" action.
+```
+
+It does not yet own:
+
+- provider choice
+- card/UPI/payment-method details
+- provider-specific response shapes
+- success/failure handling
+- retries
+- idempotency
+- database records
+- real money movement

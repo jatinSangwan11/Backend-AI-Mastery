@@ -148,6 +148,25 @@ Closing statement:
 - Remaining cleanup is intentionally deferred unless it blocks learning.
 - Next project direction: Project 02, Payment Provider System, to revisit these same ideas under provider/payment pressure.
 
+Session update:
+
+- Started Phase 1, Project 02: Payment Provider System.
+- Clarified where the payment system fits in a backend pipeline:
+  - product/order flow already knows the user, item, and price
+  - payment system receives a valid user/payment request and tries to collect money
+  - external providers such as Stripe/Razorpay sit outside our system
+  - order/product flow later uses payment result to unlock/mark the purchase
+- Clarified "charge a user" as: ask the payment system/provider to collect money for a user and amount.
+- Created the first intentionally naive slice:
+  - `projects/02-oop-lld-payments/payment.py`
+  - `projects/02-oop-lld-payments/tests/test_payment.py`
+- First function:
+  - `charge_payment(user_id: str, amount: int) -> None`
+  - currently only prints the charge action; it does not move real money or call a real provider
+- First test uses `capsys` to assert the printed charge message.
+- Current responsibility checkpoint: `charge_payment` owns only the basic "start a charge for this user and amount" action. It does not yet own provider choice, payment method, success/failure, retries, idempotency, database records, or real money movement.
+- Ran project 02 tests: 1 passed.
+
 ## Working Agreement
 
 - We prioritize projects over theory.
