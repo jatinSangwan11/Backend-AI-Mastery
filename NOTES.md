@@ -434,3 +434,72 @@ pytest restores the original value after the test
 ```
 
 We replace the whole list with `["oops"]` instead of appending because the test should focus only on the invalid-channel case and avoid running real channels first.
+
+## Explicit Dependencies And Enabled Channels
+
+New pressure:
+
+```text
+Security alerts should only be sent through channels enabled for this user/use case.
+```
+
+This created two separate concepts:
+
+- Configured channels: what the system is capable of using for this call.
+- Enabled channels: what this user/use case allows.
+
+Example:
+
+```text
+configured channels -> email, SMS, push
+enabled channels    -> email, push
+```
+
+So `send_security_alert` now receives both explicitly:
+
+```python
+def send_security_alert(
+    user: User,
+    configured_channels: list[SecurityAlertChannel],
+    enabled_channels: list[str],
+) -> None:
+    ...
+```
+
+Important intuition:
+
+```text
+If a function needs something to do its job, make that dependency visible in the function signature.
+```
+
+Before, `send_security_alert` secretly depended on the module-level `security_alert_channels` list. That made tests patch global state with `monkeypatch`.
+
+After, tests and callers can pass the channel list directly:
+
+```python
+send_security_alert(
+    user,
+    security_alert_channels,
+    [EMAIL_CHANNEL, PUSH_CHANNEL],
+)
+```
+
+Each channel also has a stable identity:
+
+```python
+channel.channel_type
+```
+
+The function can now filter:
+
+```python
+if channel.channel_type in enabled_channels:
+    notify(user)
+```
+
+This is the pain relief that leads to dependency injection:
+
+```text
+stop reaching for hidden/global collaborators
+pass required collaborators into the function/object that needs them
+```

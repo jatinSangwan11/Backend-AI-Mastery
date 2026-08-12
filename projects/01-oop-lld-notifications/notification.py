@@ -21,6 +21,9 @@ AWS_SNS_PROVIDER = "AWS SNS"
 
 FCM_PROVIDER = "Firebase Cloud Messaging"
 
+EMAIL_CHANNEL = "email"
+SMS_CHANNEL = "sms"
+PUSH_CHANNEL = "push"
 
 class EmailSender:
     def __init__(self, sender_email: str, provider_name: str) -> None:
@@ -67,12 +70,14 @@ class PushSender:
         print(f"Message: {message}")
 
 class SecurityAlertChannel(Protocol):
+    channel_type: str
     def notify(self, user: User) -> None:
         ...
 
 class SecurityEmailAlertChannel:
-    def __init__(self, email_sender: EmailSender) -> None:
+    def __init__(self, email_sender: EmailSender, channel_type: str) -> None:
         self.email_sender = email_sender
+        self.channel_type = channel_type
 
     def notify(self, user: User) -> None:
         self.email_sender.send(
@@ -83,16 +88,18 @@ class SecurityEmailAlertChannel:
 
 
 class SecuritySmsAlertChannel:
-    def __init__(self, sms_sender: SmsSender) -> None:
+    def __init__(self, sms_sender: SmsSender, channel_type: str) -> None:
         self.sms_sender = sms_sender
+        self.channel_type = channel_type
 
     def notify(self, user: User) -> None:
         self.sms_sender.send(user.phone_no, "Security Alert: New login detected on your account")
 
 
 class SecurityPushAlertChannel:
-    def __init__(self, push_sender: PushSender) -> None:
+    def __init__(self, push_sender: PushSender, channel_type: str) -> None:
         self.push_sender = push_sender
+        self.channel_type = channel_type
 
     def notify(self, user: User) -> None:
         self.push_sender.send(
@@ -112,9 +119,9 @@ security_email_sender = EmailSender(SECURITY_SENDER_EMAIL, AWS_SES_PROVIDER)
 security_push_sender = PushSender(FCM_PROVIDER)
 
 security_alert_channels: list[SecurityAlertChannel] = [
-    SecurityEmailAlertChannel(security_email_sender),
-    SecuritySmsAlertChannel(security_sms_sender),
-    SecurityPushAlertChannel(security_push_sender),
+    SecurityEmailAlertChannel(security_email_sender, EMAIL_CHANNEL),
+    SecuritySmsAlertChannel(security_sms_sender, SMS_CHANNEL),
+    SecurityPushAlertChannel(security_push_sender, PUSH_CHANNEL),
 ]
 
 def send_welcome_email(user: User) -> None:
@@ -141,18 +148,24 @@ def send_otp_notification(user: User, otp: str) -> None:
     otp_sms_sender.send(user.phone_no, f"OTP: {otp}")       
 
 
-def send_security_alert(user: User) -> None:
-    for channel in security_alert_channels:
+def send_security_alert(
+    user: User,
+    configured_channels: list[SecurityAlertChannel],
+    enabled_channels: list[str],
+) -> None:
+    for channel in configured_channels:
         notify = getattr(channel, "notify", None)
         if not callable(notify):
             raise TypeError("Invalid security alert channel")
-        notify(user)
+        
+        if channel.channel_type in enabled_channels:
+            notify(user)
 
 
 if __name__ == "__main__":
 
     user = User("jatin@example.com", "8173828382", "device-token-123")
-    send_security_alert(user)
+    send_security_alert(user, security_alert_channels, [EMAIL_CHANNEL, SMS_CHANNEL, PUSH_CHANNEL])
 
 # means
 # If this file is being run directly, execute this block.

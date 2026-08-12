@@ -111,6 +111,21 @@ Session update:
 - Learned how to test module-level configuration safely with `monkeypatch.setattr`.
 - Key test idea: temporarily replace `notification.security_alert_channels` with `["oops"]` to verify the invalid-channel error path, then let pytest restore the original value.
 
+## 2026-08-12
+
+Session update:
+
+- Introduced user/use-case channel preferences for security alerts.
+- Split the security-alert inputs into:
+  - configured channels: what the system can send through
+  - enabled channels: what this user/use case allows
+- Added channel identity constants such as `EMAIL_CHANNEL`, `SMS_CHANNEL`, and `PUSH_CHANNEL`.
+- Extended `SecurityAlertChannel` to include `channel_type`.
+- Changed `send_security_alert` so configured channels and enabled channels are passed explicitly instead of relying on the module-level global list.
+- Added a test proving disabled channels are skipped: email + push enabled means SMS is not sent.
+- Reinforced the dependency idea without naming it first: if a function needs collaborators to do its job, make those collaborators visible in the function signature.
+- Ran project tests: 10 passed.
+
 ## Working Agreement
 
 - We prioritize projects over theory.
