@@ -109,6 +109,20 @@ class SecurityPushAlertChannel:
         )
 
 
+class SecurityAlertNotifier:
+    def __init__(self, configured_channels: list[SecurityAlertChannel]) -> None:
+        self.configured_channels = configured_channels
+
+    def notify(self, user: User, enabled_channels: list[str]) -> None:
+        for channel in self.configured_channels:
+            notify = getattr(channel, "notify", None)
+            if not callable(notify):
+                raise TypeError("Invalid security alert channel")
+
+            if channel.channel_type in enabled_channels:
+                notify(user)
+
+
 otp_sms_sender = SmsSender(TWILIO_PROVIDER)
 security_sms_sender = SmsSender(AWS_SNS_PROVIDER)
 
@@ -123,6 +137,8 @@ security_alert_channels: list[SecurityAlertChannel] = [
     SecuritySmsAlertChannel(security_sms_sender, SMS_CHANNEL),
     SecurityPushAlertChannel(security_push_sender, PUSH_CHANNEL),
 ]
+
+security_alert_notifier = SecurityAlertNotifier(security_alert_channels)
 
 def send_welcome_email(user: User) -> None:
     marketing_email_sender.send(
@@ -148,24 +164,10 @@ def send_otp_notification(user: User, otp: str) -> None:
     otp_sms_sender.send(user.phone_no, f"OTP: {otp}")       
 
 
-def send_security_alert(
-    user: User,
-    configured_channels: list[SecurityAlertChannel],
-    enabled_channels: list[str],
-) -> None:
-    for channel in configured_channels:
-        notify = getattr(channel, "notify", None)
-        if not callable(notify):
-            raise TypeError("Invalid security alert channel")
-        
-        if channel.channel_type in enabled_channels:
-            notify(user)
-
-
 if __name__ == "__main__":
 
     user = User("jatin@example.com", "8173828382", "device-token-123")
-    send_security_alert(user, security_alert_channels, [EMAIL_CHANNEL, SMS_CHANNEL, PUSH_CHANNEL])
+    security_alert_notifier.notify(user, [EMAIL_CHANNEL, SMS_CHANNEL, PUSH_CHANNEL])
 
 # means
 # If this file is being run directly, execute this block.

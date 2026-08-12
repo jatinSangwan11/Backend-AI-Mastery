@@ -1,7 +1,6 @@
 import pytest
 
-import notification
-from notification import EmailSender, send_otp_notification, send_password_reset_email, send_security_alert, send_welcome_email, User
+from notification import EmailSender, SecurityAlertNotifier, security_alert_notifier, send_otp_notification, send_password_reset_email, send_welcome_email, User
 from notification import AWS_SES_PROVIDER, AWS_SNS_PROVIDER, EMAIL_CHANNEL, FCM_PROVIDER, MAILGUN_PROVIDER, PUSH_CHANNEL, SECURITY_SENDER_EMAIL, MARKETING_SENDER_EMAIL, SENDGRID_PROVIDER, SMS_CHANNEL, SUPPORT_SENDER_EMAIL, TWILIO_PROVIDER
 
 # pytest automatically regonizes test_*.py / *_test.py   x
@@ -86,9 +85,8 @@ def test_password_reset_email(user, capsys) -> None:
 
 
 def test_security_alert_happy_case(user, capsys) -> None:
-    send_security_alert(
+    security_alert_notifier.notify(
         user,
-        notification.security_alert_channels,
         [EMAIL_CHANNEL, SMS_CHANNEL, PUSH_CHANNEL],
     )
     
@@ -107,9 +105,8 @@ def test_security_alert_happy_case(user, capsys) -> None:
 
 
 def test_security_alert_only_uses_enabled_channels(user, capsys) -> None:
-    send_security_alert(
+    security_alert_notifier.notify(
         user,
-        notification.security_alert_channels,
         [EMAIL_CHANNEL, PUSH_CHANNEL],
     )
 
@@ -121,12 +118,11 @@ def test_security_alert_only_uses_enabled_channels(user, capsys) -> None:
     assert "Sending SMS to 8182828232" not in output
 
 
-def test_send_security_alert_rejects_invalid_channel(user, monkeypatch) -> None:
-    monkeypatch.setattr(notification, "security_alert_channels", ["oops"])
+def test_security_alert_notifier_rejects_invalid_channel(user) -> None:
+    notifier = SecurityAlertNotifier(["oops"])
 
     with pytest.raises(TypeError, match="Invalid security alert channel"):
-        send_security_alert(
+        notifier.notify(
             user,
-            notification.security_alert_channels,
             [EMAIL_CHANNEL, SMS_CHANNEL, PUSH_CHANNEL],
         )
