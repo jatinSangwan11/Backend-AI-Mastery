@@ -126,3 +126,25 @@ def test_security_alert_notifier_rejects_invalid_channel(user) -> None:
             user,
             [EMAIL_CHANNEL, SMS_CHANNEL, PUSH_CHANNEL],
         )
+
+
+# this is the fake security Alert channel for testing 
+class FakeSecurityAlertChannel:
+    def __init__(self, channel_type: str) -> None:
+        self.channel_type = channel_type
+        self.notified_users = []
+
+    def notify(self, user: User) -> None:
+        self.notified_users.append(user)
+
+def test_security_alert_notifier_notifies_only_enabled_channels(user) -> None:
+    email_channel = FakeSecurityAlertChannel(EMAIL_CHANNEL)
+    sms_channel = FakeSecurityAlertChannel(SMS_CHANNEL)
+    push_channel = FakeSecurityAlertChannel(PUSH_CHANNEL)
+
+    notifier = SecurityAlertNotifier([email_channel, sms_channel, push_channel])
+    notifier.notify(user, [EMAIL_CHANNEL, PUSH_CHANNEL])
+
+    assert email_channel.notified_users == [user]
+    assert sms_channel.notified_users == []
+    assert push_channel.notified_users == [user]
