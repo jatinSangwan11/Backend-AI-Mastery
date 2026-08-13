@@ -236,6 +236,40 @@ Session update:
 - Discussed the important boundary: provider-specific response shapes should not leak into the orchestrator.
 - Ran project 02 tests: 5 passed.
 
+Session update:
+
+- Added provider-level payment failure pressure.
+- Made fake providers configurable with `should_succeed: bool = True`.
+- Stripe fake raw response now uses:
+  - `paid: True/False`
+  - `status: "succeeded"` or `"failed"`
+  - success/failure description
+- Razorpay fake raw response now uses:
+  - `captured: True/False`
+  - `status: "captured"` or `"failed"`
+  - success/failure description
+- Added tests proving Stripe and Razorpay convert failed raw responses into `PaymentResult(status="failed", ...)`.
+- Current bottleneck left behind: `charge_payment(...)` already has a failed-result branch, but it is still hard to drive that branch because it creates/selects the provider internally.
+- Ran project 02 tests: 7 passed.
+
+Session update:
+
+- Refactored `charge_payment(...)` so the provider collaborator is passed in explicitly instead of selected internally.
+- Old shape:
+  - `charge_payment(user_id, amount, provider_name)`
+  - selected provider internally via `get_payment_provider(...)`
+- New shape:
+  - `charge_payment(user_id, amount, provider)`
+  - caller/provider-selection layer passes an object satisfying the `Provider` protocol
+- Kept `get_payment_provider(...)` as the provider-selection function; selection did not disappear, it moved outside the orchestrator.
+- Added a test that passes `StripePaymentProvider(should_succeed=False)` into `charge_payment(...)` and proves the app-level failed result.
+- Responsibility checkpoint:
+  - `get_payment_provider(...)` owns provider selection
+  - `charge_payment(...)` owns orchestration with a provided payment provider
+  - tests can now control the provider collaborator directly
+- This is the same pressure as dependency injection: make collaborators visible when hidden creation makes behavior hard to test or reason about.
+- Ran project 02 tests: 8 passed.
+
 ## Working Agreement
 
 - We prioritize projects over theory.

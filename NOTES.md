@@ -935,3 +935,213 @@ The provider class owns charging through that provider and converting that provi
 ```
 
 This is acceptable for now because both responsibilities are closely related to the provider boundary. If the conversion grows large later, it may become its own helper/object.
+
+## Project 02 Bottleneck 05: Provider-Level Failure
+
+The orchestrator already had this branch:
+
+```python
+if provider_result.status == "success":
+    return {
+        "status": "success",
+        "message": "Payment successful",
+    }
+
+return {
+    "status": "failed",
+    "message": "Payment failed",
+}
+```
+
+But both real fake providers always returned success, so we could not prove failure behavior.
+
+First pressure to add:
+
+```text
+Can each provider translate its own failed raw response into PaymentResult?
+```
+
+We made fake providers configurable:
+
+```python
+StripePaymentProvider(should_succeed=False)
+RazorpayPaymentProvider(should_succeed=False)
+```
+
+So Stripe can produce:
+
+```python
+{
+    "paid": False,
+    "status": "failed",
+    "description": "Payment failed",
+}
+```
+
+and Razorpay can produce:
+
+```python
+{
+    "captured": False,
+    "status": "failed",
+    "description": "Payment failed",
+}
+```
+
+Both convert into:
+
+```python
+PaymentResult(
+    "failed",
+    "<provider>",
+    "Payment failed",
+)
+```
+
+Responsibility checkpoint:
+
+```text
+Provider classes own provider-level success/failure translation.
+charge_payment owns app-level success/failure interpretation.
+```
+
+Remaining bottleneck:
+
+```text
+charge_payment has a failure branch, but we cannot cleanly force it to receive a failed provider result because it selects/creates providers internally.
+```
+
+That pressure points toward passing collaborators into the flow instead of hiding them inside it.
+
+## Project 02 Bottleneck 06: Hidden Provider Collaborator
+
+The previous `charge_payment` shape was:
+
+```python
+def charge_payment(user_id: str, amount: int, provider_name: str) -> dict:
+    provider = get_payment_provider(provider_name)
+    provider_result = provider.charge(user_id, amount)
+    ...
+```
+
+This worked, but it hid an important collaborator:
+
+```text
+charge_payment needed a provider object to do its job.
+```
+
+The visible pain was testing:
+
+```text
+How do we force charge_payment to receive a failed provider result?
+```
+
+The deeper design pain:
+
+```text
+charge_payment was doing both provider selection and payment orchestration.
+```
+
+Refactor:
+
+```python
+def charge_payment(user_id: str, amount: int, provider: Provider) -> dict:
+    provider_result = provider.charge(user_id, amount)
+    ...
+```
+
+Now provider selection happens outside:
+
+```python
+provider = get_payment_provider("stripe")
+result = charge_payment("40", 500, provider)
+```
+
+Responsibility split:
+
+```text
+get_payment_provider(...) -> provider selection
+charge_payment(...)       -> orchestration with a provided provider
+Provider protocol         -> expected provider behavior shape
+```
+
+The name of this idea:
+
+```text
+dependency injection
+```
+
+In plain words:
+
+```text
+If a function/object needs a collaborator, pass that collaborator in instead of creating/selecting it hidden inside.
+```
+
+Use this when hidden collaborator creation makes behavior hard to test, replace, or reason about.
+
+### Collaborator And Dependency Injection Vocabulary
+
+A collaborator is:
+
+```text
+another object/function this code needs in order to do its job
+```
+
+In Project 02:
+
+```text
+charge_payment needs a payment provider to charge money.
+```
+
+So the provider object is a collaborator of `charge_payment`.
+
+A dependency is:
+
+```text
+something this function/object depends on to work
+```
+
+In Project 02:
+
+```text
+charge_payment depends on a Provider.
+```
+
+Injection means:
+
+```text
+we pass/give that dependency from outside
+```
+
+Before dependency injection:
+
+```python
+def charge_payment(user_id: str, amount: int, provider_name: str) -> dict:
+    provider = get_payment_provider(provider_name)
+    provider_result = provider.charge(user_id, amount)
+    ...
+```
+
+Here `charge_payment` creates/selects its provider collaborator internally.
+
+After dependency injection:
+
+```python
+def charge_payment(user_id: str, amount: int, provider: Provider) -> dict:
+    provider_result = provider.charge(user_id, amount)
+    ...
+```
+
+Here the provider collaborator is passed in from outside.
+
+How to recognize the pressure:
+
+```text
+If hidden creation/selection of another object makes behavior hard to test, replace, or reason about, consider passing that object in.
+```
+
+Plain definition:
+
+```text
+dependency injection = pass required collaborators/dependencies from outside instead of creating them hidden inside.
+```

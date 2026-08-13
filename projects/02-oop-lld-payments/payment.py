@@ -15,6 +15,8 @@ class Provider(Protocol):
 
 
 class StripePaymentProvider:
+    def __init__(self, should_succeed: bool = True) -> None:
+        self.should_succeed = should_succeed
 
     def convert_to_app_result(self, raw_result: dict) -> PaymentResult:
         if raw_result["paid"] is True:
@@ -35,15 +37,18 @@ class StripePaymentProvider:
             "object": "payment_intent",
             "amount": 500,
             "currency": "inr",
-            "status": "succeeded",
-            "paid": True,
-            "description": "Payment completed successfully",
+            "status": "succeeded" if self.should_succeed else "failed",
+            "paid": self.should_succeed,
+            "description": "Payment completed successfully" if self.should_succeed else "Payment failed",
         }
         result = self.convert_to_app_result(stripe_raw_response)
         return result
 
 
 class RazorpayPaymentProvider:
+    def __init__(self, should_succeed: bool = True) -> None:
+        self.should_succeed = should_succeed
+
     def convert_to_app_result(self, raw_result: dict) -> PaymentResult:
         if raw_result["captured"] is True:
             status = "success"
@@ -63,9 +68,9 @@ class RazorpayPaymentProvider:
             "entity": "payment",
             "amount": 500,
             "currency": "INR",
-            "status": "captured",
-            "captured": True,
-            "description": "Payment captured successfully",
+            "status": "captured" if self.should_succeed else "failed",
+            "captured": self.should_succeed,
+            "description": "Payment captured successfully" if self.should_succeed else "Payment failed",
         }
         result = self.convert_to_app_result(razorpay_raw_response)
         return result
@@ -81,8 +86,7 @@ def get_payment_provider(provider_name: str) -> Provider:
     raise ValueError("Unsupported payment provider")
 
 
-def charge_payment(user_id: str, amount: int, provider_name: str) -> dict:
-    provider = get_payment_provider(provider_name)
+def charge_payment(user_id: str, amount: int, provider: Provider) -> dict:
     provider_result = provider.charge(user_id, amount)
 
     if provider_result.status == "success":
