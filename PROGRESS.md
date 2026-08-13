@@ -167,6 +167,75 @@ Session update:
 - Current responsibility checkpoint: `charge_payment` owns only the basic "start a charge for this user and amount" action. It does not yet own provider choice, payment method, success/failure, retries, idempotency, database records, or real money movement.
 - Ran project 02 tests: 1 passed.
 
+Session update:
+
+- Added the next pressure: payments can go through more than one provider, currently Stripe and Razorpay.
+- First saw the naive `if/elif` shape inside `charge_payment`, where one function owned:
+  - starting the payment charge flow
+  - choosing the provider branch
+  - knowing provider-specific charging behavior
+- Discussed why this becomes painful as providers increase:
+  - every new provider forces edits to the central payment function
+  - the function becomes a place where too much provider knowledge accumulates
+  - provider-specific behavior becomes more prone to developer mistakes
+- Refactored to separate responsibilities:
+  - `charge_payment(...)` owns the payment flow
+  - `get_payment_provider(...)` owns provider selection by name
+  - `StripePaymentProvider.charge(...)` owns Stripe charging behavior
+  - `RazorpayPaymentProvider.charge(...)` owns Razorpay charging behavior
+- Important nuance: the `if` did not disappear yet. It moved into a smaller function whose only responsibility is provider selection.
+- Added tests for Stripe, Razorpay, and unsupported provider error behavior.
+- Ran project 02 tests: 3 passed.
+
+Session update:
+
+- Added the next pressure: the caller needs to know whether the payment succeeded or failed.
+- Changed provider `.charge(...)` methods so they still print the provider action, but now also return a provider-level result dict.
+- Current provider result shape:
+  - `status`
+  - `provider_name`
+  - `provider_message`
+- Changed `charge_payment(...)` to return an app-level result dict:
+  - success provider result becomes `{"status": "success", "message": "Payment successful"}`
+  - failed provider result becomes `{"status": "failed", "message": "Payment failed"}`
+- Responsibility checkpoint:
+  - provider `.charge(...)` owns provider-level charging behavior and provider-level outcome
+  - `charge_payment(...)` owns flow coordination and conversion into the app-level payment result
+- Kept results as dicts intentionally; dataclasses may come later if repeated dict keys/stringly-typed access becomes painful.
+- Updated tests to assert both printed provider behavior and returned app-level payment result.
+- Ran project 02 tests: 3 passed.
+
+## 2026-08-13
+
+Session update:
+
+- Picked up Project 02 from the clean checkpoint.
+- Added the next pressure: provider result dicts depend on repeated string keys such as `status`, `provider_name`, and `provider_message`.
+- Introduced `PaymentResult` as a dataclass to give provider results a named shape.
+- Changed `StripePaymentProvider.charge(...)` and `RazorpayPaymentProvider.charge(...)` to return `PaymentResult` instead of plain dicts.
+- Changed `charge_payment(...)` to read `provider_result.status` instead of `provider_result["status"]`.
+- Added direct provider tests proving both providers return the expected `PaymentResult`.
+- Responsibility checkpoint:
+  - `PaymentResult` owns the provider result data shape
+  - provider classes own creating provider-level results
+  - `charge_payment(...)` owns interpreting the provider result into an app-level payment result
+- Ran project 02 tests: 5 passed.
+
+Session update:
+
+- Added provider-specific raw response pressure:
+  - Stripe-like raw response uses fields such as `paid`, `status: "succeeded"`, and `description`
+  - Razorpay-like raw response uses fields such as `captured`, `status: "captured"`, and `description`
+- Kept `charge_payment(...)` unchanged so it still only sees the common `PaymentResult`.
+- Added provider-specific conversion helpers:
+  - `StripePaymentProvider.convert_to_app_result(...)`
+  - `RazorpayPaymentProvider.convert_to_app_result(...)`
+- Responsibility checkpoint:
+  - provider classes now own the fake provider charge call and the conversion from that provider's raw response into our payment system's `PaymentResult`
+  - `charge_payment(...)` owns only interpreting `PaymentResult` into the app-level payment result
+- Discussed the important boundary: provider-specific response shapes should not leak into the orchestrator.
+- Ran project 02 tests: 5 passed.
+
 ## Working Agreement
 
 - We prioritize projects over theory.

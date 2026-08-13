@@ -678,3 +678,260 @@ It does not yet own:
 - idempotency
 - database records
 - real money movement
+
+## Project 02 Bottleneck 01: Provider Logic In The Main Flow
+
+The first provider pressure:
+
+```text
+All payments do not have to use the same provider forever.
+Some payments may use Stripe.
+Some payments may use Razorpay.
+```
+
+The naive shape is:
+
+```python
+def charge_payment(user_id: str, amount: int, provider_name: str) -> None:
+    if provider_name == "stripe":
+        print(...)
+    elif provider_name == "razorpay":
+        print(...)
+```
+
+This works for two tiny providers, but the responsibility starts to blur.
+
+`charge_payment` begins to own:
+
+- starting/coordinating the payment charge flow
+- choosing which provider branch to use
+- knowing provider-specific charging behavior
+
+The pain:
+
+```text
+Every new provider forces us to edit the central payment function.
+Provider details collect in one place.
+The function becomes easier to break as branches increase.
+```
+
+First refactor:
+
+```python
+def charge_payment(user_id: str, amount: int, provider_name: str) -> None:
+    provider = get_payment_provider(provider_name)
+    provider.charge(user_id, amount)
+```
+
+Responsibility split:
+
+```text
+charge_payment               -> payment flow coordination
+get_payment_provider         -> provider selection
+StripePaymentProvider        -> Stripe charging behavior
+RazorpayPaymentProvider      -> Razorpay charging behavior
+```
+
+Important nuance:
+
+```text
+The if/elif did not disappear yet.
+It moved to get_payment_provider, where provider selection is the only job.
+```
+
+This is useful progress because `charge_payment` no longer knows how every provider charges. It only asks the selected provider to charge.
+
+## Project 02 Bottleneck 02: Payment Needs A Result
+
+The next pressure:
+
+```text
+The order/product flow cannot act on a print statement.
+It needs to know whether the payment succeeded or failed.
+```
+
+So provider methods now return a provider-level result:
+
+```python
+{
+    "status": "success",
+    "provider_name": "stripe",
+    "provider_message": "Stripe charge completed",
+}
+```
+
+Then `charge_payment` converts that into the app-level result:
+
+```python
+{
+    "status": "success",
+    "message": "Payment successful",
+}
+```
+
+Responsibility split:
+
+```text
+provider.charge(...) -> provider charging behavior and provider-level outcome
+charge_payment(...)  -> payment flow coordination and app-level result decision
+```
+
+Important boundary:
+
+```text
+The provider can speak in provider-specific details.
+The payment flow should return a cleaner result that the rest of the app can use.
+```
+
+We are using dicts first on purpose:
+
+```text
+dicts make the shape visible quickly.
+dataclasses become useful later if repeated keys and string-based access become awkward.
+```
+
+## Project 02 Bottleneck 03: Repeated Dict Shape
+
+The provider result first used a plain dict:
+
+```python
+{
+    "status": "success",
+    "provider_name": "stripe",
+    "provider_message": "Stripe charge completed",
+}
+```
+
+That worked, but the shape depended on repeated string keys:
+
+```python
+provider_result["status"]
+provider_result["provider_name"]
+provider_result["provider_message"]
+```
+
+The pain:
+
+```text
+A typo in a key fails at runtime.
+Every provider has to remember the same keys manually.
+The result shape is important, but it has no name in the code.
+```
+
+So we introduced a small data object:
+
+```python
+@dataclass
+class PaymentResult:
+    status: str
+    provider_name: str
+    provider_message: str
+```
+
+Now providers return:
+
+```python
+PaymentResult(
+    "success",
+    "stripe",
+    "Stripe charge completed",
+)
+```
+
+And the orchestrator reads:
+
+```python
+if provider_result.status == "success":
+    ...
+```
+
+Responsibility split:
+
+```text
+PaymentResult          -> provider result data shape
+provider classes       -> create provider-level results
+charge_payment(...)    -> interpret provider result into app-level result
+```
+
+Name of the idea:
+
+```text
+PaymentResult is a data object.
+```
+
+Use a dataclass when related values travel together and the shape deserves a name.
+
+## Project 02 Bottleneck 04: Provider-Specific Raw Responses
+
+The next pressure:
+
+```text
+Stripe and Razorpay do not speak the same response language.
+```
+
+Example Stripe-like raw response:
+
+```python
+{
+    "id": "pi_123",
+    "object": "payment_intent",
+    "amount": 500,
+    "currency": "inr",
+    "status": "succeeded",
+    "paid": True,
+    "description": "Payment completed successfully",
+}
+```
+
+Example Razorpay-like raw response:
+
+```python
+{
+    "id": "pay_456",
+    "entity": "payment",
+    "amount": 500,
+    "currency": "INR",
+    "status": "captured",
+    "captured": True,
+    "description": "Payment captured successfully",
+}
+```
+
+The app does not want to care that Stripe means success with `paid == True` while Razorpay means success with `captured == True`.
+
+So each provider class translates its own raw response:
+
+```python
+class StripePaymentProvider:
+    def convert_to_app_result(self, raw_result: dict) -> PaymentResult:
+        ...
+```
+
+```python
+class RazorpayPaymentProvider:
+    def convert_to_app_result(self, raw_result: dict) -> PaymentResult:
+        ...
+```
+
+Responsibility split:
+
+```text
+provider.charge(...)             -> fake provider call for now
+provider.convert_to_app_result   -> translate provider raw response into PaymentResult
+charge_payment(...)              -> interpret PaymentResult into app-level result
+```
+
+Important boundary:
+
+```text
+Provider-specific response details stay inside provider classes.
+charge_payment should not know about Stripe's `paid` field or Razorpay's `captured` field.
+```
+
+Current provider class responsibility:
+
+```text
+The provider class owns charging through that provider and converting that provider's response into our common payment result.
+```
+
+This is acceptable for now because both responsibilities are closely related to the provider boundary. If the conversion grows large later, it may become its own helper/object.
