@@ -1,10 +1,10 @@
 import pytest
 
-from payment import (
-    PaymentResult,
+from models import PaymentResult
+from payment import charge_payment
+from providers import (
     RazorpayPaymentProvider,
     StripePaymentProvider,
-    charge_payment,
     get_payment_provider,
 )
 

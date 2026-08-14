@@ -1233,3 +1233,42 @@ This is the same rule from Project 01:
 stable config goes into the behavior object.
 event data stays as method arguments.
 ```
+
+## Project 02 Bottleneck 09: Module Responsibility Split
+
+`payment.py` started to own too many different things:
+
+```text
+PaymentResult data shape
+Provider protocol
+Stripe/Razorpay provider behavior
+provider-specific response conversion
+provider selection
+charge_payment orchestration
+```
+
+The code still worked, but navigation and ownership were becoming blurry.
+
+So we split by responsibility:
+
+```text
+models.py          -> PaymentResult data shape
+providers.py       -> Provider protocol, concrete providers, provider selection
+payment.py         -> charge_payment orchestration
+tests/test_payment.py -> tests and fake provider test double
+```
+
+Important rule:
+
+```text
+Do not split just because classes exist.
+Split when a file has multiple responsibilities and navigation/ownership starts becoming unclear.
+```
+
+Current responsibility checkpoint:
+
+```text
+models.py owns data shape.
+providers.py owns provider boundary behavior.
+payment.py owns payment flow orchestration.
+```

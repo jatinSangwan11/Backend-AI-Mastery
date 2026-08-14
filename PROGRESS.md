@@ -294,6 +294,18 @@ Session update:
 - Added tests proving provider objects store stable config.
 - Ran project 02 tests: 11 passed.
 
+Session update:
+
+- Split Project 02's single `payment.py` file by responsibility after it started owning too many concepts.
+- New module ownership:
+  - `models.py` owns the `PaymentResult` data shape
+  - `providers.py` owns the `Provider` protocol, concrete provider behavior, provider response conversion, and provider selection
+  - `payment.py` owns payment orchestration via `charge_payment(...)`
+  - `tests/test_payment.py` owns behavior tests and fake provider test double
+- Updated imports so tests read from the module that owns each concept.
+- Behavior stayed the same after the split.
+- Ran project 02 tests: 11 passed.
+
 ## Working Agreement
 
 - We prioritize projects over theory.
