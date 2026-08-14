@@ -605,3 +605,749 @@ Weekend revision goal:
 ```text
 For each object/module, say what responsibility it owns and what it should not know.
 ```
+
+## Project 02 Starting Context: Payment Provider System
+
+The payment system sits between the product/order flow and the external payment provider.
+
+Pipeline:
+
+```text
+User clicks Buy
+-> product/order system knows user, item, and price
+-> payment system receives user_id and amount
+-> payment system talks to an external provider later
+-> payment result comes back as success/failure/pending
+-> order system marks purchase paid, failed, or still waiting
+```
+
+So Project 02 is not building the product catalog, price calculation, cart, article/course ownership, or UI checkout page.
+
+Project 02 is building this responsibility:
+
+```text
+Given a valid user/payment request, try to collect money through a payment provider and report what happened.
+```
+
+Meaning of "charge a user":
+
+```text
+Ask the payment system/provider to collect an amount from that user.
+```
+
+Example:
+
+```python
+charge_payment(user_id="40", amount=500)
+```
+
+In the first toy slice, no real money moves. The function only prints:
+
+```text
+Charging user 40 amount 500
+```
+
+In a real backend, this would eventually mean:
+
+```text
+For user 40, collect amount 500 through a payment method/provider, then return or record the result.
+```
+
+Important starting expectation:
+
+```text
+Make the simplest payment action visible first.
+Notice what becomes awkward.
+Add requirements one at a time.
+Only then introduce names like provider abstraction, dependency injection, test double, or adapter.
+```
+
+Current responsibility checkpoint:
+
+```text
+charge_payment owns only the basic "start a charge for this user and amount" action.
+```
+
+It does not yet own:
+
+- provider choice
+- card/UPI/payment-method details
+- provider-specific response shapes
+- success/failure handling
+- retries
+- idempotency
+- database records
+- real money movement
+
+## Project 02 Bottleneck 01: Provider Logic In The Main Flow
+
+The first provider pressure:
+
+```text
+All payments do not have to use the same provider forever.
+Some payments may use Stripe.
+Some payments may use Razorpay.
+```
+
+The naive shape is:
+
+```python
+def charge_payment(user_id: str, amount: int, provider_name: str) -> None:
+    if provider_name == "stripe":
+        print(...)
+    elif provider_name == "razorpay":
+        print(...)
+```
+
+This works for two tiny providers, but the responsibility starts to blur.
+
+`charge_payment` begins to own:
+
+- starting/coordinating the payment charge flow
+- choosing which provider branch to use
+- knowing provider-specific charging behavior
+
+The pain:
+
+```text
+Every new provider forces us to edit the central payment function.
+Provider details collect in one place.
+The function becomes easier to break as branches increase.
+```
+
+First refactor:
+
+```python
+def charge_payment(user_id: str, amount: int, provider_name: str) -> None:
+    provider = get_payment_provider(provider_name)
+    provider.charge(user_id, amount)
+```
+
+Responsibility split:
+
+```text
+charge_payment               -> payment flow coordination
+get_payment_provider         -> provider selection
+StripePaymentProvider        -> Stripe charging behavior
+RazorpayPaymentProvider      -> Razorpay charging behavior
+```
+
+Important nuance:
+
+```text
+The if/elif did not disappear yet.
+It moved to get_payment_provider, where provider selection is the only job.
+```
+
+This is useful progress because `charge_payment` no longer knows how every provider charges. It only asks the selected provider to charge.
+
+## Project 02 Bottleneck 02: Payment Needs A Result
+
+The next pressure:
+
+```text
+The order/product flow cannot act on a print statement.
+It needs to know whether the payment succeeded or failed.
+```
+
+So provider methods now return a provider-level result:
+
+```python
+{
+    "status": "success",
+    "provider_name": "stripe",
+    "provider_message": "Stripe charge completed",
+}
+```
+
+Then `charge_payment` converts that into the app-level result:
+
+```python
+{
+    "status": "success",
+    "message": "Payment successful",
+}
+```
+
+Responsibility split:
+
+```text
+provider.charge(...) -> provider charging behavior and provider-level outcome
+charge_payment(...)  -> payment flow coordination and app-level result decision
+```
+
+Important boundary:
+
+```text
+The provider can speak in provider-specific details.
+The payment flow should return a cleaner result that the rest of the app can use.
+```
+
+We are using dicts first on purpose:
+
+```text
+dicts make the shape visible quickly.
+dataclasses become useful later if repeated keys and string-based access become awkward.
+```
+
+## Project 02 Bottleneck 03: Repeated Dict Shape
+
+The provider result first used a plain dict:
+
+```python
+{
+    "status": "success",
+    "provider_name": "stripe",
+    "provider_message": "Stripe charge completed",
+}
+```
+
+That worked, but the shape depended on repeated string keys:
+
+```python
+provider_result["status"]
+provider_result["provider_name"]
+provider_result["provider_message"]
+```
+
+The pain:
+
+```text
+A typo in a key fails at runtime.
+Every provider has to remember the same keys manually.
+The result shape is important, but it has no name in the code.
+```
+
+So we introduced a small data object:
+
+```python
+@dataclass
+class PaymentResult:
+    status: str
+    provider_name: str
+    provider_message: str
+```
+
+Now providers return:
+
+```python
+PaymentResult(
+    "success",
+    "stripe",
+    "Stripe charge completed",
+)
+```
+
+And the orchestrator reads:
+
+```python
+if provider_result.status == "success":
+    ...
+```
+
+Responsibility split:
+
+```text
+PaymentResult          -> provider result data shape
+provider classes       -> create provider-level results
+charge_payment(...)    -> interpret provider result into app-level result
+```
+
+Name of the idea:
+
+```text
+PaymentResult is a data object.
+```
+
+Use a dataclass when related values travel together and the shape deserves a name.
+
+## Project 02 Bottleneck 04: Provider-Specific Raw Responses
+
+The next pressure:
+
+```text
+Stripe and Razorpay do not speak the same response language.
+```
+
+Example Stripe-like raw response:
+
+```python
+{
+    "id": "pi_123",
+    "object": "payment_intent",
+    "amount": 500,
+    "currency": "inr",
+    "status": "succeeded",
+    "paid": True,
+    "description": "Payment completed successfully",
+}
+```
+
+Example Razorpay-like raw response:
+
+```python
+{
+    "id": "pay_456",
+    "entity": "payment",
+    "amount": 500,
+    "currency": "INR",
+    "status": "captured",
+    "captured": True,
+    "description": "Payment captured successfully",
+}
+```
+
+The app does not want to care that Stripe means success with `paid == True` while Razorpay means success with `captured == True`.
+
+So each provider class translates its own raw response:
+
+```python
+class StripePaymentProvider:
+    def convert_to_app_result(self, raw_result: dict) -> PaymentResult:
+        ...
+```
+
+```python
+class RazorpayPaymentProvider:
+    def convert_to_app_result(self, raw_result: dict) -> PaymentResult:
+        ...
+```
+
+Responsibility split:
+
+```text
+provider.charge(...)             -> fake provider call for now
+provider.convert_to_app_result   -> translate provider raw response into PaymentResult
+charge_payment(...)              -> interpret PaymentResult into app-level result
+```
+
+Important boundary:
+
+```text
+Provider-specific response details stay inside provider classes.
+charge_payment should not know about Stripe's `paid` field or Razorpay's `captured` field.
+```
+
+Current provider class responsibility:
+
+```text
+The provider class owns charging through that provider and converting that provider's response into our common payment result.
+```
+
+This is acceptable for now because both responsibilities are closely related to the provider boundary. If the conversion grows large later, it may become its own helper/object.
+
+## Project 02 Bottleneck 05: Provider-Level Failure
+
+The orchestrator already had this branch:
+
+```python
+if provider_result.status == "success":
+    return {
+        "status": "success",
+        "message": "Payment successful",
+    }
+
+return {
+    "status": "failed",
+    "message": "Payment failed",
+}
+```
+
+But both real fake providers always returned success, so we could not prove failure behavior.
+
+First pressure to add:
+
+```text
+Can each provider translate its own failed raw response into PaymentResult?
+```
+
+We made fake providers configurable:
+
+```python
+StripePaymentProvider(should_succeed=False)
+RazorpayPaymentProvider(should_succeed=False)
+```
+
+So Stripe can produce:
+
+```python
+{
+    "paid": False,
+    "status": "failed",
+    "description": "Payment failed",
+}
+```
+
+and Razorpay can produce:
+
+```python
+{
+    "captured": False,
+    "status": "failed",
+    "description": "Payment failed",
+}
+```
+
+Both convert into:
+
+```python
+PaymentResult(
+    "failed",
+    "<provider>",
+    "Payment failed",
+)
+```
+
+Responsibility checkpoint:
+
+```text
+Provider classes own provider-level success/failure translation.
+charge_payment owns app-level success/failure interpretation.
+```
+
+Remaining bottleneck:
+
+```text
+charge_payment has a failure branch, but we cannot cleanly force it to receive a failed provider result because it selects/creates providers internally.
+```
+
+That pressure points toward passing collaborators into the flow instead of hiding them inside it.
+
+## Project 02 Bottleneck 06: Hidden Provider Collaborator
+
+The previous `charge_payment` shape was:
+
+```python
+def charge_payment(user_id: str, amount: int, provider_name: str) -> dict:
+    provider = get_payment_provider(provider_name)
+    provider_result = provider.charge(user_id, amount)
+    ...
+```
+
+This worked, but it hid an important collaborator:
+
+```text
+charge_payment needed a provider object to do its job.
+```
+
+The visible pain was testing:
+
+```text
+How do we force charge_payment to receive a failed provider result?
+```
+
+The deeper design pain:
+
+```text
+charge_payment was doing both provider selection and payment orchestration.
+```
+
+Refactor:
+
+```python
+def charge_payment(user_id: str, amount: int, provider: Provider) -> dict:
+    provider_result = provider.charge(user_id, amount)
+    ...
+```
+
+Now provider selection happens outside:
+
+```python
+provider = get_payment_provider("stripe")
+result = charge_payment("40", 500, provider)
+```
+
+Responsibility split:
+
+```text
+get_payment_provider(...) -> provider selection
+charge_payment(...)       -> orchestration with a provided provider
+Provider protocol         -> expected provider behavior shape
+```
+
+The name of this idea:
+
+```text
+dependency injection
+```
+
+In plain words:
+
+```text
+If a function/object needs a collaborator, pass that collaborator in instead of creating/selecting it hidden inside.
+```
+
+Use this when hidden collaborator creation makes behavior hard to test, replace, or reason about.
+
+### Collaborator And Dependency Injection Vocabulary
+
+A collaborator is:
+
+```text
+another object/function this code needs in order to do its job
+```
+
+In Project 02:
+
+```text
+charge_payment needs a payment provider to charge money.
+```
+
+So the provider object is a collaborator of `charge_payment`.
+
+A dependency is:
+
+```text
+something this function/object depends on to work
+```
+
+In Project 02:
+
+```text
+charge_payment depends on a Provider.
+```
+
+Injection means:
+
+```text
+we pass/give that dependency from outside
+```
+
+Before dependency injection:
+
+```python
+def charge_payment(user_id: str, amount: int, provider_name: str) -> dict:
+    provider = get_payment_provider(provider_name)
+    provider_result = provider.charge(user_id, amount)
+    ...
+```
+
+Here `charge_payment` creates/selects its provider collaborator internally.
+
+After dependency injection:
+
+```python
+def charge_payment(user_id: str, amount: int, provider: Provider) -> dict:
+    provider_result = provider.charge(user_id, amount)
+    ...
+```
+
+Here the provider collaborator is passed in from outside.
+
+How to recognize the pressure:
+
+```text
+If hidden creation/selection of another object makes behavior hard to test, replace, or reason about, consider passing that object in.
+```
+
+Plain definition:
+
+```text
+dependency injection = pass required collaborators/dependencies from outside instead of creating them hidden inside.
+```
+
+## Project 02 Bottleneck 07: Testing Orchestration With A Fake Provider
+
+After dependency injection, `charge_payment(...)` can receive any object that follows the `Provider` protocol.
+
+This lets tests avoid real Stripe/Razorpay behavior when the goal is only to test orchestration.
+
+Fake provider:
+
+```python
+class FakePaymentProvider:
+    def __init__(self, payment_result: PaymentResult) -> None:
+        self.payment_result = payment_result
+        self.charged_users = []
+
+    def charge(self, user_id: str, amount: int) -> PaymentResult:
+        self.charged_users.append((user_id, amount))
+        return self.payment_result
+```
+
+What it proves:
+
+```text
+charge_payment calls provider.charge(user_id, amount)
+charge_payment converts PaymentResult into app-level result
+```
+
+This fake has two testing roles:
+
+```text
+stub -> returns controlled PaymentResult
+spy  -> records how it was called
+```
+
+General name:
+
+```text
+test double
+```
+
+Use a test double when the thing being tested is orchestration, not the real side effect or real provider behavior.
+
+## Project 02 Bottleneck 08: Stable Provider Config
+
+Real payment providers need stable setup/config:
+
+```text
+Stripe api_key
+Stripe environment
+Razorpay merchant_id
+Razorpay environment
+```
+
+These values do not change for every payment charge, so they belong on the provider object:
+
+```python
+class StripePaymentProvider:
+    def __init__(self, api_key: str, environment: str, should_succeed: bool = True) -> None:
+        self.api_key = api_key
+        self.environment = environment
+        self.should_succeed = should_succeed
+```
+
+Event data still belongs in the method call:
+
+```python
+provider.charge(user_id, amount)
+```
+
+Responsibility split:
+
+```text
+stable provider setup/config -> provider __init__
+event/payment data           -> charge(...) arguments
+```
+
+`get_payment_provider(...)` currently owns wiring default sandbox config:
+
+```python
+return StripePaymentProvider("stripe-test-api-key", "sandbox")
+```
+
+This is the same rule from Project 01:
+
+```text
+stable config goes into the behavior object.
+event data stays as method arguments.
+```
+
+## Project 02 Bottleneck 09: Module Responsibility Split
+
+`payment.py` started to own too many different things:
+
+```text
+PaymentResult data shape
+Provider protocol
+Stripe/Razorpay provider behavior
+provider-specific response conversion
+provider selection
+charge_payment orchestration
+```
+
+The code still worked, but navigation and ownership were becoming blurry.
+
+So we split by responsibility:
+
+```text
+models.py          -> PaymentResult data shape
+providers.py       -> Provider protocol, concrete providers, provider selection
+payment.py         -> charge_payment orchestration
+tests/test_payment.py -> tests and fake provider test double
+```
+
+Important rule:
+
+```text
+Do not split just because classes exist.
+Split when a file has multiple responsibilities and navigation/ownership starts becoming unclear.
+```
+
+Current responsibility checkpoint:
+
+```text
+models.py owns data shape.
+providers.py owns provider boundary behavior.
+payment.py owns payment flow orchestration.
+```
+
+## Project 02 Bottleneck 10: Payment Failure Vs Provider Error
+
+There are two different failure categories.
+
+Normal payment failure:
+
+```text
+The provider processed the payment attempt and clearly told us the payment failed.
+```
+
+Examples:
+
+```text
+wrong OTP
+wrong UPI PIN
+insufficient balance
+card declined
+bank declined transaction
+```
+
+Provider/system error:
+
+```text
+The provider/integration could not reliably process the payment attempt.
+```
+
+Examples:
+
+```text
+provider timeout
+provider API down
+network failure
+bad API key
+unexpected provider response shape
+our provider integration crashed
+```
+
+Key distinction:
+
+```text
+normal payment failure -> we know payment failed
+provider/system error  -> we may not know what happened
+```
+
+Code boundary:
+
+```python
+class PaymentProviderError(Exception):
+    pass
+```
+
+`PaymentProviderError` lives in `providers.py` because it describes a provider-boundary infra/integration failure.
+
+`charge_payment(...)` translates that provider error into a safe app-level response:
+
+```python
+try:
+    provider_result = provider.charge(user_id, amount)
+except PaymentProviderError:
+    return {
+        "status": "failed",
+        "message": "Payment provider unavailable",
+    }
+```
+
+Responsibility split:
+
+```text
+provider boundary -> raises PaymentProviderError for infra/integration failures
+charge_payment    -> converts provider error into app-level response
+```
+
+Important:
+
+```text
+Do not catch every Exception by default.
+Catch the boundary error you intentionally understand.
+```
