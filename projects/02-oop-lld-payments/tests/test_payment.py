@@ -9,6 +9,16 @@ from payment import (
 )
 
 
+class FakePaymentProvider:
+    def __init__(self, payment_result: PaymentResult) -> None:
+        self.payment_result = payment_result
+        self.charged_users = []
+
+    def charge(self, user_id: str, amount: int) -> PaymentResult:
+        self.charged_users.append((user_id, amount))
+        return self.payment_result
+
+
 def test_charge_payment_prints_stripe_charge_message(capsys) -> None:
     provider = get_payment_provider("stripe")
 
@@ -43,7 +53,11 @@ def test_charge_payment_rejects_unsupported_provider() -> None:
 
 
 def test_charge_payment_returns_failed_result_when_provider_fails() -> None:
-    provider = StripePaymentProvider(should_succeed=False)
+    provider = StripePaymentProvider(
+        "stripe-test-api-key",
+        "sandbox",
+        should_succeed=False,
+    )
 
     result = charge_payment("40", 500, provider)
 
@@ -54,7 +68,7 @@ def test_charge_payment_returns_failed_result_when_provider_fails() -> None:
 
 
 def test_stripe_provider_returns_payment_result() -> None:
-    provider = StripePaymentProvider()
+    provider = StripePaymentProvider("stripe-test-api-key", "sandbox")
 
     result = provider.charge("40", 500)
 
@@ -66,7 +80,11 @@ def test_stripe_provider_returns_payment_result() -> None:
 
 
 def test_stripe_provider_returns_failed_payment_result() -> None:
-    provider = StripePaymentProvider(should_succeed=False)
+    provider = StripePaymentProvider(
+        "stripe-test-api-key",
+        "sandbox",
+        should_succeed=False,
+    )
 
     result = provider.charge("40", 500)
 
@@ -78,7 +96,7 @@ def test_stripe_provider_returns_failed_payment_result() -> None:
 
 
 def test_razorpay_provider_returns_payment_result() -> None:
-    provider = RazorpayPaymentProvider()
+    provider = RazorpayPaymentProvider("razorpay-merchant-123", "sandbox")
 
     result = provider.charge("40", 500)
 
@@ -90,7 +108,11 @@ def test_razorpay_provider_returns_payment_result() -> None:
 
 
 def test_razorpay_provider_returns_failed_payment_result() -> None:
-    provider = RazorpayPaymentProvider(should_succeed=False)
+    provider = RazorpayPaymentProvider(
+        "razorpay-merchant-123",
+        "sandbox",
+        should_succeed=False,
+    )
 
     result = provider.charge("40", 500)
 
@@ -99,3 +121,28 @@ def test_razorpay_provider_returns_failed_payment_result() -> None:
         "razorpay",
         "Payment failed",
     )
+
+
+def test_charge_payment_orchestration_under_fake_provider() -> None:
+    provider = FakePaymentProvider(PaymentResult("failed", "fake", "Fake payment failed"))
+    result = charge_payment("40", 500, provider)
+
+    assert provider.charged_users == [("40", 500)]
+    assert result == {
+        "status": "failed",
+        "message": "Payment failed",
+    }
+
+
+def test_stripe_provider_stores_stable_config() -> None:
+    provider = StripePaymentProvider("custom-stripe-key", "production")
+
+    assert provider.api_key == "custom-stripe-key"
+    assert provider.environment == "production"
+
+
+def test_razorpay_provider_stores_stable_config() -> None:
+    provider = RazorpayPaymentProvider("merchant-456", "production")
+
+    assert provider.merchant_id == "merchant-456"
+    assert provider.environment == "production"

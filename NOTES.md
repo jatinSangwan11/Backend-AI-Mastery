@@ -1145,3 +1145,91 @@ Plain definition:
 ```text
 dependency injection = pass required collaborators/dependencies from outside instead of creating them hidden inside.
 ```
+
+## Project 02 Bottleneck 07: Testing Orchestration With A Fake Provider
+
+After dependency injection, `charge_payment(...)` can receive any object that follows the `Provider` protocol.
+
+This lets tests avoid real Stripe/Razorpay behavior when the goal is only to test orchestration.
+
+Fake provider:
+
+```python
+class FakePaymentProvider:
+    def __init__(self, payment_result: PaymentResult) -> None:
+        self.payment_result = payment_result
+        self.charged_users = []
+
+    def charge(self, user_id: str, amount: int) -> PaymentResult:
+        self.charged_users.append((user_id, amount))
+        return self.payment_result
+```
+
+What it proves:
+
+```text
+charge_payment calls provider.charge(user_id, amount)
+charge_payment converts PaymentResult into app-level result
+```
+
+This fake has two testing roles:
+
+```text
+stub -> returns controlled PaymentResult
+spy  -> records how it was called
+```
+
+General name:
+
+```text
+test double
+```
+
+Use a test double when the thing being tested is orchestration, not the real side effect or real provider behavior.
+
+## Project 02 Bottleneck 08: Stable Provider Config
+
+Real payment providers need stable setup/config:
+
+```text
+Stripe api_key
+Stripe environment
+Razorpay merchant_id
+Razorpay environment
+```
+
+These values do not change for every payment charge, so they belong on the provider object:
+
+```python
+class StripePaymentProvider:
+    def __init__(self, api_key: str, environment: str, should_succeed: bool = True) -> None:
+        self.api_key = api_key
+        self.environment = environment
+        self.should_succeed = should_succeed
+```
+
+Event data still belongs in the method call:
+
+```python
+provider.charge(user_id, amount)
+```
+
+Responsibility split:
+
+```text
+stable provider setup/config -> provider __init__
+event/payment data           -> charge(...) arguments
+```
+
+`get_payment_provider(...)` currently owns wiring default sandbox config:
+
+```python
+return StripePaymentProvider("stripe-test-api-key", "sandbox")
+```
+
+This is the same rule from Project 01:
+
+```text
+stable config goes into the behavior object.
+event data stays as method arguments.
+```

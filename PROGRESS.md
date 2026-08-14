@@ -270,6 +270,30 @@ Session update:
 - This is the same pressure as dependency injection: make collaborators visible when hidden creation makes behavior hard to test or reason about.
 - Ran project 02 tests: 8 passed.
 
+## 2026-08-14
+
+Session update:
+
+- Picked up Project 02 with the goal of wrapping it carefully, one pressure at a time.
+- Added a `FakePaymentProvider` test double inside the tests.
+- The fake provider:
+  - returns a controlled `PaymentResult`
+  - records calls in `charged_users`
+- Used the fake provider to test `charge_payment(...)` orchestration directly:
+  - verifies `charge_payment(...)` calls `provider.charge(user_id, amount)`
+  - verifies `charge_payment(...)` converts failed `PaymentResult` into app-level failed result
+- Named the concept: test double. More specifically, this fake works as a stub and a spy.
+- Added provider stable config pressure.
+- Changed provider objects so stable setup lives in `__init__`:
+  - Stripe gets `api_key` and `environment`
+  - Razorpay gets `merchant_id` and `environment`
+- Kept event data as method arguments:
+  - `user_id`
+  - `amount`
+- Updated `get_payment_provider(...)` to wire default sandbox config for Stripe and Razorpay.
+- Added tests proving provider objects store stable config.
+- Ran project 02 tests: 11 passed.
+
 ## Working Agreement
 
 - We prioritize projects over theory.

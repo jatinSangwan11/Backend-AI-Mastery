@@ -15,7 +15,14 @@ class Provider(Protocol):
 
 
 class StripePaymentProvider:
-    def __init__(self, should_succeed: bool = True) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        environment: str,
+        should_succeed: bool = True,
+    ) -> None:
+        self.api_key = api_key
+        self.environment = environment
         self.should_succeed = should_succeed
 
     def convert_to_app_result(self, raw_result: dict) -> PaymentResult:
@@ -46,7 +53,14 @@ class StripePaymentProvider:
 
 
 class RazorpayPaymentProvider:
-    def __init__(self, should_succeed: bool = True) -> None:
+    def __init__(
+        self,
+        merchant_id: str,
+        environment: str,
+        should_succeed: bool = True,
+    ) -> None:
+        self.merchant_id = merchant_id
+        self.environment = environment
         self.should_succeed = should_succeed
 
     def convert_to_app_result(self, raw_result: dict) -> PaymentResult:
@@ -78,10 +92,10 @@ class RazorpayPaymentProvider:
 
 def get_payment_provider(provider_name: str) -> Provider:
     if provider_name == "stripe":
-        return StripePaymentProvider()
+        return StripePaymentProvider("stripe-test-api-key", "sandbox")
 
     if provider_name == "razorpay":
-        return RazorpayPaymentProvider()
+        return RazorpayPaymentProvider("razorpay-merchant-123", "sandbox")
 
     raise ValueError("Unsupported payment provider")
 
