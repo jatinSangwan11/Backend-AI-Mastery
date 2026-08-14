@@ -8,6 +8,10 @@ class Provider(Protocol):
         ...
 
 
+class PaymentProviderError(Exception):
+    pass
+
+
 class StripePaymentProvider:
     def __init__(
         self,

@@ -3,6 +3,7 @@ import pytest
 from models import PaymentResult
 from payment import charge_payment
 from providers import (
+    PaymentProviderError,
     RazorpayPaymentProvider,
     StripePaymentProvider,
     get_payment_provider,
@@ -17,6 +18,11 @@ class FakePaymentProvider:
     def charge(self, user_id: str, amount: int) -> PaymentResult:
         self.charged_users.append((user_id, amount))
         return self.payment_result
+
+
+class BrokenPaymentProvider:
+    def charge(self, user_id: str, amount: int) -> PaymentResult:
+        raise PaymentProviderError("provider timeout")
 
 
 def test_charge_payment_prints_stripe_charge_message(capsys) -> None:
@@ -131,6 +137,17 @@ def test_charge_payment_orchestration_under_fake_provider() -> None:
     assert result == {
         "status": "failed",
         "message": "Payment failed",
+    }
+
+
+def test_charge_payment_returns_provider_unavailable_when_provider_errors() -> None:
+    provider = BrokenPaymentProvider()
+
+    result = charge_payment("40", 500, provider)
+
+    assert result == {
+        "status": "failed",
+        "message": "Payment provider unavailable",
     }
 
 

@@ -1272,3 +1272,82 @@ models.py owns data shape.
 providers.py owns provider boundary behavior.
 payment.py owns payment flow orchestration.
 ```
+
+## Project 02 Bottleneck 10: Payment Failure Vs Provider Error
+
+There are two different failure categories.
+
+Normal payment failure:
+
+```text
+The provider processed the payment attempt and clearly told us the payment failed.
+```
+
+Examples:
+
+```text
+wrong OTP
+wrong UPI PIN
+insufficient balance
+card declined
+bank declined transaction
+```
+
+Provider/system error:
+
+```text
+The provider/integration could not reliably process the payment attempt.
+```
+
+Examples:
+
+```text
+provider timeout
+provider API down
+network failure
+bad API key
+unexpected provider response shape
+our provider integration crashed
+```
+
+Key distinction:
+
+```text
+normal payment failure -> we know payment failed
+provider/system error  -> we may not know what happened
+```
+
+Code boundary:
+
+```python
+class PaymentProviderError(Exception):
+    pass
+```
+
+`PaymentProviderError` lives in `providers.py` because it describes a provider-boundary infra/integration failure.
+
+`charge_payment(...)` translates that provider error into a safe app-level response:
+
+```python
+try:
+    provider_result = provider.charge(user_id, amount)
+except PaymentProviderError:
+    return {
+        "status": "failed",
+        "message": "Payment provider unavailable",
+    }
+```
+
+Responsibility split:
+
+```text
+provider boundary -> raises PaymentProviderError for infra/integration failures
+charge_payment    -> converts provider error into app-level response
+```
+
+Important:
+
+```text
+Do not catch every Exception by default.
+Catch the boundary error you intentionally understand.
+```

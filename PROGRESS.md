@@ -306,6 +306,19 @@ Session update:
 - Behavior stayed the same after the split.
 - Ran project 02 tests: 11 passed.
 
+Session update:
+
+- Added provider/system error boundary.
+- Clarified the distinction:
+  - normal payment failure means the payment was processed and clearly failed, such as wrong OTP, insufficient balance, or card declined
+  - provider/system error means the provider/integration could not reliably process the request, such as timeout, provider API down, network failure, bad API key, or unexpected response shape
+- Added `PaymentProviderError` in `providers.py` to represent provider-boundary infra/integration failures.
+- Updated `charge_payment(...)` to catch `PaymentProviderError` and return:
+  - `{"status": "failed", "message": "Payment provider unavailable"}`
+- Added `BrokenPaymentProvider` test double that raises `PaymentProviderError`.
+- Added a test proving `charge_payment(...)` translates provider errors into the safe app-level provider-unavailable response.
+- Ran project 02 tests: 12 passed.
+
 ## Working Agreement
 
 - We prioritize projects over theory.
