@@ -319,6 +319,21 @@ Session update:
 - Added a test proving `charge_payment(...)` translates provider errors into the safe app-level provider-unavailable response.
 - Ran project 02 tests: 12 passed.
 
+Session update:
+
+- Discussed idempotency as the final Project 02 production boundary, without implementing it yet.
+- Clarified that idempotency means the same payment request retried with the same key should not create a duplicate money movement.
+- Example pressure:
+  - provider charges successfully
+  - backend times out before receiving response
+  - frontend/user retries
+  - without idempotency the user may be charged twice
+- Clarified retry flow:
+  - clear payment failure can allow a new payment attempt
+  - timeout/unknown status should reuse the same payment request identity and reconcile/check status
+- Decided not to implement full idempotency in Project 02 because it requires storage, unique constraints, transactions, provider idempotency support, webhooks, retries, and reconciliation.
+- Project 02 takeaway: payment charge operations must not be blindly retried; production workflows need stable payment request identity and durable state.
+
 ## Working Agreement
 
 - We prioritize projects over theory.
