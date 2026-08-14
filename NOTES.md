@@ -1351,3 +1351,62 @@ Important:
 Do not catch every Exception by default.
 Catch the boundary error you intentionally understand.
 ```
+
+## Project 02 Production Boundary: Idempotency
+
+Idempotency means:
+
+```text
+Doing the same operation again with the same key should not create a second side effect.
+```
+
+For payments, the side effect is money movement.
+
+Payment rule:
+
+```text
+Same payment request retried -> do not charge twice.
+```
+
+Example danger:
+
+```text
+Jatin buys a course for Rs. 500.
+Backend calls provider.
+Provider charges successfully.
+Backend times out before receiving the success response.
+Frontend retries.
+Backend blindly calls provider again.
+Jatin may be charged twice.
+```
+
+With idempotency, the backend/provider uses a stable request identity:
+
+```text
+payment_request_id / idempotency_key = "payreq_123"
+```
+
+Then retries with the same key should return or reconcile the same payment attempt instead of creating a new charge.
+
+Important distinction:
+
+```text
+clear payment failure -> user can start a new payment attempt
+timeout/unknown status -> reuse same payment request identity and check/reconcile status
+```
+
+Why we are not implementing full idempotency in Project 02:
+
+```text
+It needs database storage, unique constraints, transactions, provider idempotency support, webhooks, retries, and reconciliation.
+```
+
+Project 02 boundary lesson:
+
+```text
+payment provider layer knows how to charge through providers.
+payment orchestration coordinates one charge attempt.
+future storage/workflow layer owns durable payment state and idempotency.
+```
+
+We intentionally leave full implementation for later backend phases.
