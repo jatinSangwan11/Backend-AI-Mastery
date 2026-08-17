@@ -334,6 +334,66 @@ Session update:
 - Decided not to implement full idempotency in Project 02 because it requires storage, unique constraints, transactions, provider idempotency support, webhooks, retries, and reconciliation.
 - Project 02 takeaway: payment charge operations must not be blindly retried; production workflows need stable payment request identity and durable state.
 
+## 2026-08-17
+
+Session update:
+
+- Started Phase 1, Project 03: API Key Management System.
+- Clarified the problem: API keys let a backend identify and authorize developer/client requests.
+- First tiny flow:
+  - create an API key for a user
+  - validate that the created key is accepted
+  - reject an unknown key
+- Added the first naive implementation in `projects/03-oop-lld-api-keys/api.py`.
+- Added tests in `projects/03-oop-lld-api-keys/tests/test_api.py`.
+- Introduced `APIKeyRecord` as a dataclass when key strings needed metadata:
+  - `api_key`
+  - `user_id`
+  - `created_at`
+  - `revoked`
+- Refined the meaning of validation:
+  - valid does not only mean "exists"
+  - valid means key exists and is not revoked
+- Added revoke behavior:
+  - `revoke_api_key(api_key, user_id)` marks a matching user's key as revoked
+  - returns `True` when a matching key is found
+  - returns `False` when the key is missing or belongs to another user
+- Introduced `APIKeyStore` to own in-memory storage and lookup:
+  - `add_api_key(...)`
+  - `find_record(...)`
+- Extracted `generate_api_key(user_id)` from `create_api_key(...)`.
+- Added duplicate-key avoidance in `create_api_key(...)` by generating candidate keys until `APIKeyStore.find_record(...)` returns `None`.
+- Responsibility checkpoint:
+  - `APIKeyRecord` owns metadata for one API key
+  - `APIKeyStore` owns storing and finding records
+  - `generate_api_key(...)` owns key string generation
+  - `create_api_key(...)` owns the creation workflow
+  - `validate_api_key(...)` owns current usability check
+  - `revoke_api_key(...)` owns user-safe revoke behavior
+- Cleaned duplicate test name and removed unnecessary randomness from the revoked-key test.
+- Ran project 03 tests: 7 passed.
+
+Session update:
+
+- Added a testable duplicate-key generation path.
+- Clarified the pressure:
+  - production key generation should be unpredictable
+  - tests need deterministic control over generated keys
+  - hidden randomness inside `create_api_key(...)` makes collision behavior hard to test
+- Made key generation injectable at the function level:
+  - `create_api_key(user, key_generator=generate_api_key)`
+  - normal callers can keep using the real generator
+  - tests can pass a fake generator
+- Added a collision test where the fake generator returns:
+  - first key: already exists
+  - second key: unique
+- Verified `create_api_key(...)` generates again and stores the unique key.
+- Responsibility checkpoint:
+  - `generate_api_key(...)` owns real random key generation
+  - fake generator owns controlled test values
+  - `create_api_key(...)` owns the creation workflow and duplicate avoidance
+- Ran project 03 tests: 8 passed.
+
 ## Working Agreement
 
 - We prioritize projects over theory.

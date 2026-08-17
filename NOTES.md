@@ -1351,3 +1351,279 @@ Important:
 Do not catch every Exception by default.
 Catch the boundary error you intentionally understand.
 ```
+
+## Project 03 Starting Context: API Key Management System
+
+API keys solve this backend problem:
+
+```text
+When a client calls our API, how do we know who is calling and whether they are allowed?
+```
+
+Basic request pipeline:
+
+```text
+client request includes API key
+-> backend validates API key
+-> request is allowed or rejected
+```
+
+Without API key management:
+
+```text
+anyone can call the API
+we do not know who is calling
+we cannot revoke access
+we cannot attach usage/billing/permissions to a caller
+```
+
+Project 03 starts with the smallest flow:
+
+```text
+create API key for a user
+validate that key
+reject unknown key
+```
+
+## Project 03 Bottleneck 01: Key String Vs Key Metadata
+
+The first naive store held only key strings.
+
+That was enough to answer:
+
+```text
+does this key exist?
+```
+
+But it could not cleanly answer:
+
+```text
+who owns this key?
+when was it created?
+has it been revoked?
+```
+
+So we introduced a data object:
+
+```python
+@dataclass
+class APIKeyRecord:
+    api_key: str
+    user_id: str
+    created_at: str
+    revoked: bool
+```
+
+Responsibility:
+
+```text
+APIKeyRecord owns stored metadata for one API key.
+```
+
+This is a data object, like `PaymentResult` in Project 02.
+
+## Project 03 Bottleneck 02: Existence Vs Validity
+
+Once `APIKeyRecord` had `revoked`, validation needed a sharper meaning.
+
+Old meaning:
+
+```text
+valid = key exists
+```
+
+New meaning:
+
+```text
+valid = key exists and is not revoked
+```
+
+Responsibility:
+
+```text
+validate_api_key owns deciding whether an incoming key is currently usable.
+```
+
+## Project 03 Bottleneck 03: Revoke Behavior And Caller Signal
+
+Adding `revoked` as data was not enough. The system needed behavior:
+
+```text
+user wants to revoke an API key
+```
+
+`revoke_api_key(api_key, user_id)` now owns:
+
+```text
+find the matching key
+make sure it belongs to the user
+mark it revoked
+tell caller whether a matching key was found
+```
+
+Return value:
+
+```text
+True  -> matching key found and revoked
+False -> no matching key for that user
+```
+
+Important distinction:
+
+```text
+revoked usually means the record still exists but cannot be used.
+deleted usually means the record is removed or hidden.
+```
+
+For API keys, revoke is often better than delete because audit/security systems may need to remember that the key existed.
+
+## Project 03 Bottleneck 04: Store Responsibility
+
+The first implementation used a global list directly.
+
+The problem was not that in-memory storage is bad. For this project, an in-memory store is fine.
+
+The pressure was:
+
+```text
+storage access logic was spreading across functions
+```
+
+So we introduced:
+
+```python
+class APIKeyStore:
+    def add_api_key(self, api_key_record: APIKeyRecord) -> str:
+        ...
+
+    def find_record(self, api_key: str) -> APIKeyRecord | None:
+        ...
+```
+
+Responsibility:
+
+```text
+APIKeyStore owns storing and finding API key records.
+```
+
+The current module has one shared store instance:
+
+```python
+api_key_directory = APIKeyStore()
+```
+
+This represents one in-memory system store, not one store per user. It can hold records for many users.
+
+## Project 03 Bottleneck 05: Creation Workflow And Key Generation
+
+`create_api_key(...)` began by directly generating the key string inside itself.
+
+We extracted:
+
+```python
+def generate_api_key(user_id: str) -> str:
+    ...
+```
+
+Responsibility:
+
+```text
+generate_api_key owns key string generation.
+create_api_key owns the creation workflow.
+```
+
+Current `create_api_key(...)` does multiple steps:
+
+```text
+generate candidate key
+check store for duplicate
+create APIKeyRecord
+save record in APIKeyStore
+return key string
+```
+
+This is a reasonable tradeoff for now because `create_api_key(...)` is orchestrating the creation workflow and delegating details:
+
+```text
+key generation detail -> generate_api_key(...)
+storage detail        -> APIKeyStore.add_api_key/find_record
+metadata shape        -> APIKeyRecord
+```
+
+This is not "one function doing everything" in the same bad way as before. It is a workflow function coordinating smaller responsibility owners.
+
+Remaining pressure:
+
+```text
+The duplicate-key loop exists, but testing it is hard because generate_api_key uses random internally.
+```
+
+## Project 03 Bottleneck 06: Hidden Randomness And Test Control
+
+Production API keys should be unpredictable.
+
+But tests need control.
+
+The pressure:
+
+```text
+How do we test duplicate-key handling if generate_api_key(...) uses random internally?
+```
+
+Scenario we need to force:
+
+```text
+store already has "sk-existing-user_40"
+first generated key  -> "sk-existing-user_40"  # collision
+second generated key -> "sk-unique-user_40"    # unique
+```
+
+If random generation is hidden inside `create_api_key(...)`, the test cannot reliably force that sequence.
+
+So we made key generation injectable:
+
+```python
+def create_api_key(
+    user: str,
+    key_generator: Callable[[str], str] = generate_api_key,
+) -> str:
+    ...
+```
+
+Normal code can still call:
+
+```python
+create_api_key("user_40")
+```
+
+Tests can pass a fake generator:
+
+```python
+generated_keys = ["sk-existing-user_40", "sk-unique-user_40"]
+
+def fake_key_generator(user_id: str) -> str:
+    return generated_keys.pop(0)
+```
+
+Responsibility split:
+
+```text
+generate_api_key(...) -> real key generation
+fake generator        -> controlled test key generation
+create_api_key(...)   -> creation workflow and duplicate avoidance
+APIKeyStore           -> lookup/storage
+```
+
+This is dependency injection again:
+
+```text
+create_api_key depends on key generation, so tests can pass that dependency in.
+```
+
+Important distinction:
+
+```text
+Business behavior still wants unpredictable keys.
+Tests want deterministic keys.
+Good design lets both exist.
+```
