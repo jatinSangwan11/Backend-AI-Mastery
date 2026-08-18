@@ -3,11 +3,14 @@ import datetime
 import pytest
 
 from api import (
+    APIKeyDisplayRecord,
     APIKeyRecord,
+    APIKeyValidationResult,
     DEFAULT_API_KEY_LIFETIME,
     api_key_directory,
     create_api_key,
     hash_api_key,
+    list_api_keys,
     revoke_api_key,
     validate_api_key,
 )
@@ -24,11 +27,11 @@ def clear_api_key_store() -> None:
 def test_created_api_key_is_valid() -> None:
     api_key = create_api_key("user_40", current_time=CURRENT_TIME)
 
-    assert validate_api_key(api_key, CURRENT_TIME) is True
+    assert validate_api_key(api_key, CURRENT_TIME) == APIKeyValidationResult(True, "user_40")
 
 
 def test_unknown_api_key_is_invalid() -> None:
-    assert validate_api_key("bad_key", CURRENT_TIME) is False
+    assert validate_api_key("bad_key", CURRENT_TIME) == APIKeyValidationResult(False, None)
 
 
 def test_create_api_key_stores_api_key_record() -> None:
@@ -53,14 +56,14 @@ def test_revoked_api_key_is_invalid() -> None:
         True
     )
     api_key_directory.add_api_key(api_key_record)
-    assert validate_api_key(api, CURRENT_TIME) is False
+    assert validate_api_key(api, CURRENT_TIME) == APIKeyValidationResult(False, None)
 
 
 def test_revoke_api_key_toggle() -> None:
     api_key = create_api_key("21", current_time=CURRENT_TIME)
     revoke_api_key(api_key, "21")
 
-    assert validate_api_key(api_key, CURRENT_TIME) is False    
+    assert validate_api_key(api_key, CURRENT_TIME) == APIKeyValidationResult(False, None)
 
 def test_revoke_api_key_returns_true_when_key_is_revoked() -> None:
     api_key = create_api_key("21", current_time=CURRENT_TIME)
@@ -71,7 +74,7 @@ def test_revoke_api_key_returns_false_for_wrong_user() -> None:
     api_key = create_api_key("user_40", current_time=CURRENT_TIME)
 
     assert revoke_api_key(api_key, "user_99") is False
-    assert validate_api_key(api_key, CURRENT_TIME) is True
+    assert validate_api_key(api_key, CURRENT_TIME) == APIKeyValidationResult(True, "user_40")
 
 
 def test_create_api_key_generates_again_when_key_already_exists() -> None:
@@ -113,4 +116,47 @@ def test_expired_api_key_is_invalid() -> None:
     api_key = create_api_key("user_40", current_time=CURRENT_TIME)
     after_expiry = CURRENT_TIME + DEFAULT_API_KEY_LIFETIME
 
-    assert validate_api_key(api_key, after_expiry) is False
+    assert validate_api_key(api_key, after_expiry) == APIKeyValidationResult(False, None)
+
+
+def test_list_api_keys_returns_records_for_user() -> None:
+    create_api_key(
+        "user_40",
+        key_generator=lambda user_id: "sk-user-40-first",
+        current_time=CURRENT_TIME,
+    )
+    create_api_key(
+        "user_40",
+        key_generator=lambda user_id: "sk-user-40-second",
+        current_time=CURRENT_TIME,
+    )
+    create_api_key(
+        "user_99",
+        key_generator=lambda user_id: "sk-user-99-first",
+        current_time=CURRENT_TIME,
+    )
+
+    assert list_api_keys("user_40") == [
+        APIKeyDisplayRecord(
+            "user_40",
+            CURRENT_TIME,
+            CURRENT_TIME + DEFAULT_API_KEY_LIFETIME,
+            False,
+        ),
+        APIKeyDisplayRecord(
+            "user_40",
+            CURRENT_TIME,
+            CURRENT_TIME + DEFAULT_API_KEY_LIFETIME,
+            False,
+        ),
+    ]
+
+
+def test_list_api_keys_returns_empty_list_when_user_has_no_keys() -> None:
+    create_api_key(
+        "user_40",
+        key_generator=lambda user_id: "sk-user-40-first",
+        current_time=CURRENT_TIME,
+    )
+
+    assert list_api_keys("user_99") == []

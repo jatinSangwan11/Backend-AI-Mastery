@@ -1835,3 +1835,167 @@ This is the same kind of dependency pressure we saw with random key generation:
 hidden randomness -> hard to test collisions
 hidden current time -> hard to test expiry
 ```
+
+## Project 03 Bottleneck 10: Validation Result And Dashboard Listing
+
+The runtime validation flow needs more than a bool.
+
+Incoming request:
+
+```text
+client sends raw API key
+backend hashes it
+backend finds the stored record
+backend decides whether the key is usable
+```
+
+If validation returns only `True`, the backend still does not know who the request is acting as.
+
+So validation now returns a safe result contract:
+
+```python
+@dataclass
+class APIKeyValidationResult:
+    is_valid: bool
+    user_id: str | None
+```
+
+Valid result:
+
+```python
+APIKeyValidationResult(True, "user_40")
+```
+
+Invalid result:
+
+```python
+APIKeyValidationResult(False, None)
+```
+
+Why `user_id` matters after validation:
+
+```text
+authorization -> can this user access this resource?
+business logic -> fetch this user's data
+rate limiting -> count requests for this user
+billing/usage -> charge or track usage for this user
+audit logs -> record who performed the action
+```
+
+This also clarified the two sides of the API key system:
+
+```text
+dashboard/admin flow:
+create key, revoke key, list keys
+
+runtime request flow:
+validate key on every incoming request
+```
+
+Dashboard listing pressure:
+
+```text
+user wants to see their API keys
+```
+
+But raw API keys are secrets. After creation, the dashboard should not show the full raw key again.
+
+For now, listing returns stored metadata records:
+
+```python
+def list_api_keys(user_id: str) -> list[APIKeyRecord]:
+    return api_key_directory.find_records_for_user(user_id)
+```
+
+Storage lookup belongs in the store:
+
+```python
+def find_records_for_user(self, user_id: str) -> list[APIKeyRecord]:
+    return [
+        api_key_record
+        for api_key_record in self.api_keys_directory
+        if api_key_record.user_id == user_id
+    ]
+```
+
+Responsibility split:
+
+```text
+APIKeyValidationResult -> safe validation response
+APIKeyStore            -> knows how records are stored/searched
+list_api_keys(...)     -> dashboard use case for listing user's key records
+validate_api_key(...)  -> runtime auth use case
+```
+
+Current limitation:
+
+```text
+listing returns APIKeyRecord, which includes api_key_hash.
+```
+
+That created the next pressure:
+
+```text
+dashboard output should not expose internal hash storage details
+```
+
+So we introduced a dashboard-safe display contract:
+
+```python
+@dataclass
+class APIKeyDisplayRecord:
+    user_id: str
+    created_at: datetime.datetime
+    expires_at: datetime.datetime
+    revoked: bool
+```
+
+The store still returns internal records:
+
+```python
+def find_records_for_user(self, user_id: str) -> list[APIKeyRecord]:
+    ...
+```
+
+Then the dashboard use case converts them:
+
+```python
+def list_api_keys(user_id: str) -> list[APIKeyDisplayRecord]:
+    records = api_key_directory.find_records_for_user(user_id)
+    return [
+        APIKeyDisplayRecord(
+            record.user_id,
+            record.created_at,
+            record.expires_at,
+            record.revoked,
+        )
+        for record in records
+    ]
+```
+
+Responsibility split:
+
+```text
+APIKeyRecord        -> internal storage shape
+APIKeyDisplayRecord -> safe dashboard output shape
+APIKeyStore         -> finds stored records
+list_api_keys(...)  -> converts internal records into dashboard output
+```
+
+Production dashboards usually include a safer display model with fields like:
+
+```text
+key id
+key prefix
+created_at
+expires_at
+revoked
+last_used_at
+```
+
+The next pressure is the difference between:
+
+```text
+secret value used for authentication
+public key identity used for dashboard management
+```

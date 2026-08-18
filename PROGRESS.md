@@ -441,6 +441,54 @@ Session update:
   - tests own fixed time values to make time behavior deterministic
 - Ran project 03 tests: 10 passed.
 
+Session update:
+
+- Added dashboard listing pressure.
+- Clarified the split:
+  - creation/revocation/listing are dashboard/admin management flows
+  - validation is the real-time request-auth flow
+- Added `APIKeyValidationResult` so validation returns a safe contract instead of only a bool:
+  - `is_valid`
+  - `user_id`
+- Clarified why this matters:
+  - incoming API requests usually only carry the raw API key
+  - the backend learns the acting `user_id` by validating and looking up the key
+  - downstream systems use that `user_id` for business logic, authorization, rate limiting, billing, and audit logs
+- Added `APIKeyStore.find_records_for_user(user_id)`.
+- Added `list_api_keys(user_id)` as the dashboard-facing listing use case.
+- Listing returns stored metadata records for the user; it does not reveal raw API keys.
+- Added tests for:
+  - valid validation result includes `user_id`
+  - invalid validation result has `user_id=None`
+  - listing returns only the selected user's records
+  - listing returns an empty list when the user has no keys
+- Responsibility checkpoint:
+  - `APIKeyValidationResult` owns the safe validation response shape
+  - `APIKeyStore` owns storage lookup details
+  - `list_api_keys(...)` owns the dashboard listing use case
+- Ran project 03 tests: 12 passed.
+
+Session update:
+
+- Added dashboard-safe display contract pressure.
+- Clarified the issue:
+  - `APIKeyRecord` is an internal storage record
+  - it contains `api_key_hash`
+  - dashboard listing should not expose internal secret/hash storage details
+- Added `APIKeyDisplayRecord` with safe dashboard fields:
+  - `user_id`
+  - `created_at`
+  - `expires_at`
+  - `revoked`
+- Kept `APIKeyStore.find_records_for_user(...)` returning internal `APIKeyRecord` objects because the store owns storage data, not dashboard formatting.
+- Updated `list_api_keys(...)` to convert internal records into `APIKeyDisplayRecord` objects.
+- Responsibility checkpoint:
+  - `APIKeyRecord` owns internal stored metadata
+  - `APIKeyDisplayRecord` owns dashboard-safe display shape
+  - `APIKeyStore` owns finding stored records
+  - `list_api_keys(...)` owns converting stored records into dashboard output
+- Ran project 03 tests: 12 passed.
+
 ## Working Agreement
 
 - We prioritize projects over theory.

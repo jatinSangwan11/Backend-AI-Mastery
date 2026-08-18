@@ -16,6 +16,20 @@ class APIKeyRecord:
     revoked: bool
 
 
+@dataclass
+class APIKeyValidationResult:
+    is_valid: bool
+    user_id: str | None
+
+
+@dataclass
+class APIKeyDisplayRecord:
+    user_id: str
+    created_at: datetime.datetime
+    expires_at: datetime.datetime
+    revoked: bool
+
+
 class APIKeyStore:
 
     api_keys_directory: list[APIKeyRecord]
@@ -33,6 +47,13 @@ class APIKeyStore:
                 return api_key_record
 
         return None
+
+    def find_records_for_user(self, user_id: str) -> list[APIKeyRecord]:
+        return [
+            api_key_record
+            for api_key_record in self.api_keys_directory
+            if api_key_record.user_id == user_id
+        ]
         
 
 api_key_directory = APIKeyStore()
@@ -46,6 +67,20 @@ def revoke_api_key(api_key: str, user_id: str) -> bool:
         return True
         
     return False
+
+
+def list_api_keys(user_id: str) -> list[APIKeyDisplayRecord]:
+    records = api_key_directory.find_records_for_user(user_id)
+    return [
+        APIKeyDisplayRecord(
+            record.user_id,
+            record.created_at,
+            record.expires_at,
+            record.revoked,
+        )
+        for record in records
+    ]
+
 
 def generate_api_key(user_id: str) -> str:
     return f"sk-{secrets.token_urlsafe(32)}"
@@ -83,16 +118,19 @@ def create_api_key(
     return api_key
 
 
-def validate_api_key(api_key: str, current_time: datetime.datetime | None = None) -> bool:
+def validate_api_key(
+    api_key: str,
+    current_time: datetime.datetime | None = None,
+) -> APIKeyValidationResult:
     if current_time is None:
         current_time = datetime.datetime.now()
 
     api_key_hash = hash_api_key(api_key)
     record = api_key_directory.find_record(api_key_hash)
     if record and record.revoked == False and current_time < record.expires_at:
-        return True
+        return APIKeyValidationResult(True, record.user_id)
 
-    return False
+    return APIKeyValidationResult(False, None)
 
 
 if __name__ == "__main__":
