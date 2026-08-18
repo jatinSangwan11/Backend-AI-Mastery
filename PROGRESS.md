@@ -511,6 +511,33 @@ Session update:
   - `revoke_api_key(...)` owns dashboard-safe revoke by key identity plus user ownership check
 - Ran project 03 tests: 12 passed.
 
+Session update:
+
+- Added module responsibility split after `api.py` became too broad.
+- Created `models.py` for data contracts:
+  - `APIKeyRecord`
+  - `APIKeyValidationResult`
+  - `APIKeyDisplayRecord`
+- Created `store.py` for storage responsibility:
+  - `APIKeyStore`
+  - `api_key_directory`
+- Created `security.py` for secret-handling helpers:
+  - `generate_api_key(...)`
+  - `hash_api_key(...)`
+- Kept `DEFAULT_API_KEY_LIFETIME` in `api.py` because the 30-day expiry is a key lifecycle policy applied by `create_api_key(...)`, not a secret-generation mechanism.
+- Kept `api.py` focused on use cases:
+  - `create_api_key(...)`
+  - `validate_api_key(...)`
+  - `revoke_api_key(...)`
+  - `list_api_keys(...)`
+- Updated tests to import concepts from the modules that now own them.
+- Responsibility checkpoint:
+  - models own data shape
+  - store owns persistence-like behavior
+  - security owns secret generation/hash conversion
+  - api owns API-key workflows and lifecycle policy
+- Ran project 03 tests: 12 passed.
+
 ## Working Agreement
 
 - We prioritize projects over theory.

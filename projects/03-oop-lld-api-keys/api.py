@@ -1,72 +1,11 @@
-import hashlib
-from dataclasses import dataclass
-from typing import Callable
-import secrets
 import datetime
+from typing import Callable
+
+from models import APIKeyDisplayRecord, APIKeyRecord, APIKeyValidationResult
+from security import generate_api_key, hash_api_key
+from store import api_key_directory
 
 DEFAULT_API_KEY_LIFETIME = datetime.timedelta(days=30)
-
-
-@dataclass
-class APIKeyRecord:
-    key_id: str
-    api_key_hash: str
-    user_id: str
-    created_at: datetime.datetime
-    expires_at: datetime.datetime
-    revoked: bool
-
-
-@dataclass
-class APIKeyValidationResult:
-    is_valid: bool
-    user_id: str | None
-
-
-@dataclass
-class APIKeyDisplayRecord:
-    key_id: str
-    user_id: str
-    created_at: datetime.datetime
-    expires_at: datetime.datetime
-    revoked: bool
-
-
-class APIKeyStore:
-
-    api_keys_directory: list[APIKeyRecord]
-
-    def __init__(self) -> None:
-        self.api_keys_directory = []
-
-    def add_api_key(self, api_key_record: APIKeyRecord) -> str:
-        self.api_keys_directory.append(api_key_record)
-        return api_key_record.api_key_hash
-
-    def find_record(self, api_key_hash: str) -> APIKeyRecord | None:
-        for api_key_record in self.api_keys_directory:
-            if api_key_hash == api_key_record.api_key_hash:
-                return api_key_record
-
-        return None
-
-    def find_records_for_user(self, user_id: str) -> list[APIKeyRecord]:
-        return [
-            api_key_record
-            for api_key_record in self.api_keys_directory
-            if api_key_record.user_id == user_id
-        ]
-    
-    def find_record_by_key_id(self, key_id: str) -> APIKeyRecord | None:
-        for api_key_record in self.api_keys_directory:
-            if api_key_record.key_id == key_id:
-                return api_key_record
-        
-        return None
-        
-
-api_key_directory = APIKeyStore()
-# api_keys_directory: list[APIKeyRecord] = []
 
 def revoke_api_key(key_id: str, user_id: str) -> bool:
     record = api_key_directory.find_record_by_key_id(key_id)
@@ -87,15 +26,8 @@ def list_api_keys(user_id: str) -> list[APIKeyDisplayRecord]:
             record.expires_at,
             record.revoked,
         )
-        for record in records]
-
-
-def generate_api_key(user_id: str) -> str:
-    return f"sk-{secrets.token_urlsafe(32)}"
-
-
-def hash_api_key(api_key: str) -> str:
-    return hashlib.sha256(api_key.encode()).hexdigest()
+        for record in records
+    ]
 
 
 def create_api_key(

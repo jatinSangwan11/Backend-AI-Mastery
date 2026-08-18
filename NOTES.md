@@ -2084,3 +2084,66 @@ This is a common production shape:
 authentication path uses secrets
 management path uses safe ids
 ```
+
+## Project 03 Bottleneck 12: Module Responsibility Split
+
+`api.py` started as a simple learning file.
+
+Over time it accumulated:
+
+```text
+data contracts
+in-memory storage
+secret generation
+hashing
+creation workflow
+validation workflow
+revoke workflow
+listing workflow
+expiry policy
+```
+
+The code worked, but the module responsibility became too broad.
+
+So we split by ownership:
+
+```text
+models.py
+-> APIKeyRecord
+-> APIKeyValidationResult
+-> APIKeyDisplayRecord
+
+store.py
+-> APIKeyStore
+-> api_key_directory
+
+security.py
+-> generate_api_key(...)
+-> hash_api_key(...)
+
+api.py
+-> DEFAULT_API_KEY_LIFETIME
+-> create_api_key(...)
+-> validate_api_key(...)
+-> revoke_api_key(...)
+-> list_api_keys(...)
+```
+
+Why `DEFAULT_API_KEY_LIFETIME` stayed in `api.py`:
+
+```text
+generate_api_key(...) owns making a secure secret.
+hash_api_key(...) owns converting raw secret to stored hash.
+create_api_key(...) owns the lifecycle policy for a newly created key.
+```
+
+So the 30-day lifetime is a workflow/policy decision, not a secret-generation detail.
+
+Responsibility split:
+
+```text
+models  -> data shapes
+store   -> persistence-like lookup/storage behavior
+security -> secret handling
+api     -> use-case workflows and lifecycle policy
+```
