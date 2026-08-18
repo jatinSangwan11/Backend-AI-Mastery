@@ -489,6 +489,28 @@ Session update:
   - `list_api_keys(...)` owns converting stored records into dashboard output
 - Ran project 03 tests: 12 passed.
 
+Session update:
+
+- Added public key identity pressure.
+- Clarified the distinction:
+  - raw API key secret is used for runtime authentication
+  - `api_key_hash` is stored internally so the raw secret is not stored
+  - `key_id` is a safe public/dashboard identity for managing a stored key
+- Added `key_id` to `APIKeyRecord`.
+- Added `key_id` to `APIKeyDisplayRecord` so dashboard rows can identify which key the user wants to manage.
+- Updated revoke behavior to use the dashboard-safe identity:
+  - `revoke_api_key(key_id, user_id)`
+  - store finds the record by `key_id`
+  - revoke still checks `user_id` ownership before mutating the record
+- Added `APIKeyStore.find_record_by_key_id(...)`.
+- Fixed the partial migration errors from changing revoke from raw-key based to key-id based.
+- Responsibility checkpoint:
+  - `key_id` owns safe public identity for one stored key
+  - raw API key owns authentication proof at runtime
+  - `api_key_hash` owns internal lookup for runtime validation
+  - `revoke_api_key(...)` owns dashboard-safe revoke by key identity plus user ownership check
+- Ran project 03 tests: 12 passed.
+
 ## Working Agreement
 
 - We prioritize projects over theory.

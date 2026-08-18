@@ -9,6 +9,7 @@ DEFAULT_API_KEY_LIFETIME = datetime.timedelta(days=30)
 
 @dataclass
 class APIKeyRecord:
+    key_id: str
     api_key_hash: str
     user_id: str
     created_at: datetime.datetime
@@ -24,6 +25,7 @@ class APIKeyValidationResult:
 
 @dataclass
 class APIKeyDisplayRecord:
+    key_id: str
     user_id: str
     created_at: datetime.datetime
     expires_at: datetime.datetime
@@ -54,14 +56,20 @@ class APIKeyStore:
             for api_key_record in self.api_keys_directory
             if api_key_record.user_id == user_id
         ]
+    
+    def find_record_by_key_id(self, key_id: str) -> APIKeyRecord | None:
+        for api_key_record in self.api_keys_directory:
+            if api_key_record.key_id == key_id:
+                return api_key_record
+        
+        return None
         
 
 api_key_directory = APIKeyStore()
 # api_keys_directory: list[APIKeyRecord] = []
 
-def revoke_api_key(api_key: str, user_id: str) -> bool:
-    api_key_hash = hash_api_key(api_key)
-    record = api_key_directory.find_record(api_key_hash)
+def revoke_api_key(key_id: str, user_id: str) -> bool:
+    record = api_key_directory.find_record_by_key_id(key_id)
     if record and record.user_id == user_id: 
         record.revoked = True
         return True
@@ -73,13 +81,13 @@ def list_api_keys(user_id: str) -> list[APIKeyDisplayRecord]:
     records = api_key_directory.find_records_for_user(user_id)
     return [
         APIKeyDisplayRecord(
+            record.key_id,
             record.user_id,
             record.created_at,
             record.expires_at,
             record.revoked,
         )
-        for record in records
-    ]
+        for record in records]
 
 
 def generate_api_key(user_id: str) -> str:
@@ -107,11 +115,12 @@ def create_api_key(
             break
 
     api_key_record = APIKeyRecord(
-        api_key_hash,
-        user,
-        current_time,
-        current_time + DEFAULT_API_KEY_LIFETIME,
-        False,
+        key_id=str(len(api_key_directory.api_keys_directory) + 1),
+        api_key_hash=api_key_hash,
+        user_id=user,
+        created_at=current_time,
+        expires_at=current_time + DEFAULT_API_KEY_LIFETIME,
+        revoked=False,
     )
     
     api_key_directory.add_api_key(api_key_record)

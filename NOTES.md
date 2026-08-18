@@ -1944,6 +1944,7 @@ So we introduced a dashboard-safe display contract:
 ```python
 @dataclass
 class APIKeyDisplayRecord:
+    key_id: str
     user_id: str
     created_at: datetime.datetime
     expires_at: datetime.datetime
@@ -1964,6 +1965,7 @@ def list_api_keys(user_id: str) -> list[APIKeyDisplayRecord]:
     records = api_key_directory.find_records_for_user(user_id)
     return [
         APIKeyDisplayRecord(
+            record.key_id,
             record.user_id,
             record.created_at,
             record.expires_at,
@@ -1998,4 +2000,87 @@ The next pressure is the difference between:
 ```text
 secret value used for authentication
 public key identity used for dashboard management
+```
+
+## Project 03 Bottleneck 11: Public Key Identity Vs Secret Value
+
+Dashboard management needs to identify one key row.
+
+Example:
+
+```text
+user opens dashboard
+dashboard lists API keys
+user clicks revoke on one row
+backend receives: revoke this specific key
+```
+
+The dashboard cannot send the full raw API key back, because raw API keys are secrets and are only shown once at creation time.
+
+So we added a safe public identity:
+
+```text
+key_id
+```
+
+Important distinction:
+
+```text
+raw API key secret -> used by clients at runtime for authentication
+api_key_hash       -> stored internally for validation lookup
+key_id             -> safe dashboard identity for managing a key
+```
+
+`key_id` belongs in the stored record because the backend must be able to find the same key later:
+
+```python
+@dataclass
+class APIKeyRecord:
+    key_id: str
+    api_key_hash: str
+    user_id: str
+    created_at: datetime.datetime
+    expires_at: datetime.datetime
+    revoked: bool
+```
+
+The display contract also exposes it:
+
+```python
+@dataclass
+class APIKeyDisplayRecord:
+    key_id: str
+    user_id: str
+    created_at: datetime.datetime
+    expires_at: datetime.datetime
+    revoked: bool
+```
+
+Revoke can now use the dashboard-safe id:
+
+```python
+def revoke_api_key(key_id: str, user_id: str) -> bool:
+    record = api_key_directory.find_record_by_key_id(key_id)
+    if record and record.user_id == user_id:
+        record.revoked = True
+        return True
+
+    return False
+```
+
+Responsibility split:
+
+```text
+APIKeyRecord        -> stores both secret hash and public key identity
+APIKeyDisplayRecord -> exposes safe dashboard fields, including key_id
+APIKeyStore         -> finds records by hash, user_id, or key_id
+validate_api_key    -> uses raw key -> hash for runtime auth
+revoke_api_key      -> uses key_id + user_id for dashboard management
+```
+
+This is a common production shape:
+
+```text
+authentication path uses secrets
+management path uses safe ids
 ```
