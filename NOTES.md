@@ -2147,3 +2147,86 @@ store   -> persistence-like lookup/storage behavior
 security -> secret handling
 api     -> use-case workflows and lifecycle policy
 ```
+
+## Project 03 Closing Notes
+
+Project 03 is wrapped.
+
+What we built:
+
+```text
+API Key Management System
+```
+
+It owns two sides of API key behavior:
+
+```text
+dashboard/admin side
+-> create API key
+-> list API keys safely
+-> revoke API key safely
+
+runtime request side
+-> receive raw API key
+-> hash it
+-> find stored record
+-> check revoked/expired state
+-> return validation result with user_id
+```
+
+Final mental model:
+
+```text
+raw API key secret -> shown once and used by clients for runtime authentication
+api_key_hash       -> stored internally for validation lookup
+key_id             -> safe public identity for dashboard management
+```
+
+Final module responsibilities:
+
+```text
+models.py
+-> data contracts
+
+store.py
+-> in-memory persistence-like behavior
+
+security.py
+-> secret generation and hashing
+
+api.py
+-> use-case workflows and API key lifecycle policy
+```
+
+Main topics covered:
+
+```text
+dataclasses as contracts
+in-memory store as temporary DB
+secure secret generation
+hashing secrets before storage
+creation vs validation flow
+dashboard management vs runtime auth flow
+expiry with datetime
+injecting current time for testability
+validation result contracts
+internal storage model vs display model
+public key id vs secret value
+module responsibility split
+```
+
+Production gaps intentionally left out:
+
+```text
+real database persistence
+unique constraints/indexes
+proper key-id generation
+scopes/permissions
+rate limiting
+last_used_at tracking
+audit logs
+rotation workflow
+service object with injected store
+```
+
+These are not forgotten. They are future pressure points for later projects.
