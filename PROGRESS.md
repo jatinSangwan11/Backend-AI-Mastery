@@ -416,6 +416,31 @@ Session update:
   - public functions still accept/return raw API keys at the boundary
 - Ran project 03 tests: 9 passed.
 
+Session update:
+
+- Added API key expiry pressure.
+- Changed `APIKeyRecord` metadata from only creation/revocation data to also include:
+  - `created_at`
+  - `expires_at`
+- Switched the timestamp fields to `datetime.datetime` values instead of strings so expiry can be compared as time, not text.
+- Added a default API key lifetime of 30 days.
+- Updated `create_api_key(...)` so it stores both the creation time and expiry time.
+- Updated `validate_api_key(...)` so valid now means:
+  - key exists
+  - key is not revoked
+  - current time is before `expires_at`
+- Kept current time injectable for tests:
+  - production callers can omit it and use `datetime.datetime.now()`
+  - tests can pass a fixed time and avoid flaky clock-dependent behavior
+- Added an expired-key test.
+- Added an autouse test fixture to clear the in-memory store between tests.
+- Responsibility checkpoint:
+  - `APIKeyRecord` owns expiry metadata
+  - `create_api_key(...)` owns assigning expiry at creation time
+  - `validate_api_key(...)` owns the final validity decision
+  - tests own fixed time values to make time behavior deterministic
+- Ran project 03 tests: 10 passed.
+
 ## Working Agreement
 
 - We prioritize projects over theory.

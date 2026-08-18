@@ -1738,3 +1738,100 @@ This is similar to password storage:
 ```text
 do not store raw secret; store a hash.
 ```
+
+## Project 03 Bottleneck 09: API Key Expiry And Current Time
+
+The next pressure:
+
+```text
+API keys should not always live forever.
+```
+
+So validity grew again.
+
+Before:
+
+```text
+valid = key exists and is not revoked
+```
+
+Now:
+
+```text
+valid = key exists and is not revoked and is not expired
+```
+
+That means the stored record needs expiry metadata:
+
+```python
+@dataclass
+class APIKeyRecord:
+    api_key_hash: str
+    user_id: str
+    created_at: datetime.datetime
+    expires_at: datetime.datetime
+    revoked: bool
+```
+
+Important responsibility split:
+
+```text
+APIKeyRecord        -> owns stored metadata, including expiry
+create_api_key(...) -> decides created_at and expires_at when the key is created
+validate_api_key(...) -> decides whether the key is valid at the current time
+```
+
+The subtle pressure is time.
+
+This works in production:
+
+```python
+datetime.datetime.now()
+```
+
+But if `validate_api_key(...)` always reads the real clock internally, tests become harder to control.
+
+Example:
+
+```text
+test wants to prove "this key is expired"
+```
+
+If the function secretly uses the real current time, the test has to wait for real time or build awkward setup around the wall clock.
+
+So we made current time injectable:
+
+```python
+def validate_api_key(
+    api_key: str,
+    current_time: datetime.datetime | None = None,
+) -> bool:
+    if current_time is None:
+        current_time = datetime.datetime.now()
+```
+
+Normal runtime usage can stay simple:
+
+```python
+validate_api_key(api_key)
+```
+
+Tests can freeze time:
+
+```python
+validate_api_key(api_key, datetime.datetime(2026, 9, 17, 10, 0, 0))
+```
+
+Mental model:
+
+```text
+validate_api_key owns the validity decision.
+It does not need to hide the source of current time.
+```
+
+This is the same kind of dependency pressure we saw with random key generation:
+
+```text
+hidden randomness -> hard to test collisions
+hidden current time -> hard to test expiry
+```

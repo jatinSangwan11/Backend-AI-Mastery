@@ -2,17 +2,21 @@ import hashlib
 from dataclasses import dataclass
 from typing import Callable
 import secrets
+import datetime
+
+DEFAULT_API_KEY_LIFETIME = datetime.timedelta(days=30)
 
 
 @dataclass
 class APIKeyRecord:
     api_key_hash: str
     user_id: str
-    created_at: str
+    created_at: datetime.datetime
+    expires_at: datetime.datetime
     revoked: bool
 
 
-class APIKeyStore : 
+class APIKeyStore:
 
     api_keys_directory: list[APIKeyRecord]
 
@@ -51,7 +55,14 @@ def hash_api_key(api_key: str) -> str:
     return hashlib.sha256(api_key.encode()).hexdigest()
 
 
-def create_api_key(user: str, key_generator: Callable[[str], str] = generate_api_key) -> str:
+def create_api_key(
+    user: str,
+    key_generator: Callable[[str], str] = generate_api_key,
+    current_time: datetime.datetime | None = None,
+) -> str:
+    if current_time is None:
+        current_time = datetime.datetime.now()
+
     while True:
         # Key generation is injectable so tests can force collisions without relying on random.
         api_key = key_generator(user)
@@ -60,16 +71,25 @@ def create_api_key(user: str, key_generator: Callable[[str], str] = generate_api
         if api_key_directory.find_record(api_key_hash) is None:
             break
 
-    api_key_record = APIKeyRecord(api_key_hash, user, "2026-08-17", False)
+    api_key_record = APIKeyRecord(
+        api_key_hash,
+        user,
+        current_time,
+        current_time + DEFAULT_API_KEY_LIFETIME,
+        False,
+    )
+    
     api_key_directory.add_api_key(api_key_record)
     return api_key
 
 
-def validate_api_key(api_key: str) -> bool:
+def validate_api_key(api_key: str, current_time: datetime.datetime | None = None) -> bool:
+    if current_time is None:
+        current_time = datetime.datetime.now()
 
     api_key_hash = hash_api_key(api_key)
     record = api_key_directory.find_record(api_key_hash)
-    if record and record.revoked == False:
+    if record and record.revoked == False and current_time < record.expires_at:
         return True
 
     return False
