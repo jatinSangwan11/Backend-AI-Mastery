@@ -394,6 +394,28 @@ Session update:
   - `create_api_key(...)` owns the creation workflow and duplicate avoidance
 - Ran project 03 tests: 8 passed.
 
+Session update:
+
+- Added API key secrecy pressure.
+- Replaced insecure `random.randint(...)` style generation with `secrets.token_urlsafe(32)`.
+- Clarified why:
+  - normal `random` is for simulation/general randomness
+  - `secrets` uses OS-backed randomness through `SystemRandom`
+  - API keys are bearer secrets and must be hard to guess
+- Stopped embedding `user_id` inside the generated API key; ownership belongs in `APIKeyRecord.user_id`.
+- Added hashing boundary:
+  - raw API key is returned to the user once
+  - backend stores `api_key_hash`, not the raw API key
+  - validation/revoke hash incoming raw keys before lookup
+- Added `hash_api_key(...)` using SHA-256 for the project-level secret-storage boundary.
+- Updated tests to assert stored records contain the hash and do not store the raw key.
+- Responsibility checkpoint:
+  - `generate_api_key(...)` owns secure raw key generation
+  - `hash_api_key(...)` owns raw key to stored hash conversion
+  - `APIKeyRecord` stores `api_key_hash`
+  - public functions still accept/return raw API keys at the boundary
+- Ran project 03 tests: 9 passed.
+
 ## Working Agreement
 
 - We prioritize projects over theory.

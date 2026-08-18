@@ -1,4 +1,4 @@
-from api import APIKeyRecord, api_key_directory, create_api_key, revoke_api_key, validate_api_key
+from api import APIKeyRecord, api_key_directory, create_api_key, hash_api_key, revoke_api_key, validate_api_key
 
 
 def test_created_api_key_is_valid() -> None:
@@ -15,7 +15,7 @@ def test_create_api_key_stores_api_key_record() -> None:
     api_key = create_api_key("user_40")
 
     assert api_key_directory.api_keys_directory[-1] == APIKeyRecord(
-        api_key,
+        hash_api_key(api_key),
         "user_40",
         "2026-08-17",
         False,
@@ -25,7 +25,7 @@ def test_revoked_api_key_is_invalid() -> None:
     user_id = "21"
     api = "sk-revoked-user-21"
     api_key_record = APIKeyRecord(
-        api,
+        hash_api_key(api),
         user_id,
         "2026-08-17",
         True
@@ -55,7 +55,7 @@ def test_revoke_api_key_returns_false_for_wrong_user() -> None:
 def test_create_api_key_generates_again_when_key_already_exists() -> None:
     existing_api_key = "sk-existing-user_40"
     api_key_directory.add_api_key(
-        APIKeyRecord(existing_api_key, "user_40", "2026-08-17", False)
+        APIKeyRecord(hash_api_key(existing_api_key), "user_40", "2026-08-17", False)
     )
     generated_keys = [existing_api_key, "sk-unique-user_40"]
 
@@ -65,9 +65,16 @@ def test_create_api_key_generates_again_when_key_already_exists() -> None:
     api_key = create_api_key("user_40", fake_key_generator)
 
     assert api_key == "sk-unique-user_40"
-    assert api_key_directory.find_record("sk-unique-user_40") == APIKeyRecord(
-        "sk-unique-user_40",
+    assert api_key_directory.find_record(hash_api_key("sk-unique-user_40")) == APIKeyRecord(
+        hash_api_key("sk-unique-user_40"),
         "user_40",
         "2026-08-17",
         False,
     )
+
+
+def test_create_api_key_does_not_store_raw_api_key() -> None:
+    api_key = create_api_key("user_40")
+
+    assert api_key_directory.api_keys_directory[-1].api_key_hash == hash_api_key(api_key)
+    assert api_key_directory.api_keys_directory[-1].api_key_hash != api_key

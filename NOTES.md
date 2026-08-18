@@ -1627,3 +1627,114 @@ Business behavior still wants unpredictable keys.
 Tests want deterministic keys.
 Good design lets both exist.
 ```
+
+## Project 03 Bottleneck 07: API Keys Are Secrets
+
+The old key generation style was not appropriate for secrets:
+
+```python
+random.randint(0, 1000)
+```
+
+Problems:
+
+```text
+small search space
+predictable/general-purpose randomness
+user_id embedded in the key
+```
+
+API keys are bearer secrets:
+
+```text
+whoever has the key can act as that caller
+```
+
+So generation should use secure randomness:
+
+```python
+import secrets
+
+def generate_api_key(user_id: str) -> str:
+    return f"sk-{secrets.token_urlsafe(32)}"
+```
+
+Important distinction:
+
+```text
+random.randint(...) uses normal pseudo-random generation.
+secrets.token_urlsafe(...) uses OS-backed randomness through SystemRandom.
+```
+
+`user_id` is no longer embedded in the raw key. Ownership lives in metadata:
+
+```python
+APIKeyRecord.user_id
+```
+
+## Project 03 Bottleneck 08: Do Not Store Raw API Keys
+
+Storing raw API keys is dangerous.
+
+If the store leaks and raw keys are present:
+
+```text
+attackers can use those keys directly
+```
+
+Better boundary:
+
+```text
+raw API key -> shown/returned to user once
+hashed API key -> stored by backend
+```
+
+Current helper:
+
+```python
+def hash_api_key(api_key: str) -> str:
+    return hashlib.sha256(api_key.encode()).hexdigest()
+```
+
+Creation flow:
+
+```text
+generate raw API key
+hash raw API key
+store APIKeyRecord(api_key_hash=...)
+return raw API key to caller
+```
+
+Validation flow:
+
+```text
+receive raw API key
+hash incoming raw key
+find record by hash
+valid if record exists and is not revoked
+```
+
+Revoke flow:
+
+```text
+receive raw API key
+hash incoming raw key
+find record by hash
+revoke only if user_id matches
+```
+
+Responsibility split:
+
+```text
+generate_api_key(...) -> secure raw key generation
+hash_api_key(...)     -> raw key to stored hash conversion
+APIKeyRecord          -> stores api_key_hash, not raw api_key
+APIKeyStore           -> finds records by stored hash
+public functions      -> accept/return raw keys at the system boundary
+```
+
+This is similar to password storage:
+
+```text
+do not store raw secret; store a hash.
+```
