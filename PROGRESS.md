@@ -334,6 +334,210 @@ Session update:
 - Decided not to implement full idempotency in Project 02 because it requires storage, unique constraints, transactions, provider idempotency support, webhooks, retries, and reconciliation.
 - Project 02 takeaway: payment charge operations must not be blindly retried; production workflows need stable payment request identity and durable state.
 
+## 2026-08-17
+
+Session update:
+
+- Started Phase 1, Project 03: API Key Management System.
+- Clarified the problem: API keys let a backend identify and authorize developer/client requests.
+- First tiny flow:
+  - create an API key for a user
+  - validate that the created key is accepted
+  - reject an unknown key
+- Added the first naive implementation in `projects/03-oop-lld-api-keys/api.py`.
+- Added tests in `projects/03-oop-lld-api-keys/tests/test_api.py`.
+- Introduced `APIKeyRecord` as a dataclass when key strings needed metadata:
+  - `api_key`
+  - `user_id`
+  - `created_at`
+  - `revoked`
+- Refined the meaning of validation:
+  - valid does not only mean "exists"
+  - valid means key exists and is not revoked
+- Added revoke behavior:
+  - `revoke_api_key(api_key, user_id)` marks a matching user's key as revoked
+  - returns `True` when a matching key is found
+  - returns `False` when the key is missing or belongs to another user
+- Introduced `APIKeyStore` to own in-memory storage and lookup:
+  - `add_api_key(...)`
+  - `find_record(...)`
+- Extracted `generate_api_key(user_id)` from `create_api_key(...)`.
+- Added duplicate-key avoidance in `create_api_key(...)` by generating candidate keys until `APIKeyStore.find_record(...)` returns `None`.
+- Responsibility checkpoint:
+  - `APIKeyRecord` owns metadata for one API key
+  - `APIKeyStore` owns storing and finding records
+  - `generate_api_key(...)` owns key string generation
+  - `create_api_key(...)` owns the creation workflow
+  - `validate_api_key(...)` owns current usability check
+  - `revoke_api_key(...)` owns user-safe revoke behavior
+- Cleaned duplicate test name and removed unnecessary randomness from the revoked-key test.
+- Ran project 03 tests: 7 passed.
+
+Session update:
+
+- Added a testable duplicate-key generation path.
+- Clarified the pressure:
+  - production key generation should be unpredictable
+  - tests need deterministic control over generated keys
+  - hidden randomness inside `create_api_key(...)` makes collision behavior hard to test
+- Made key generation injectable at the function level:
+  - `create_api_key(user, key_generator=generate_api_key)`
+  - normal callers can keep using the real generator
+  - tests can pass a fake generator
+- Added a collision test where the fake generator returns:
+  - first key: already exists
+  - second key: unique
+- Verified `create_api_key(...)` generates again and stores the unique key.
+- Responsibility checkpoint:
+  - `generate_api_key(...)` owns real random key generation
+  - fake generator owns controlled test values
+  - `create_api_key(...)` owns the creation workflow and duplicate avoidance
+- Ran project 03 tests: 8 passed.
+
+Session update:
+
+- Added API key secrecy pressure.
+- Replaced insecure `random.randint(...)` style generation with `secrets.token_urlsafe(32)`.
+- Clarified why:
+  - normal `random` is for simulation/general randomness
+  - `secrets` uses OS-backed randomness through `SystemRandom`
+  - API keys are bearer secrets and must be hard to guess
+- Stopped embedding `user_id` inside the generated API key; ownership belongs in `APIKeyRecord.user_id`.
+- Added hashing boundary:
+  - raw API key is returned to the user once
+  - backend stores `api_key_hash`, not the raw API key
+  - validation/revoke hash incoming raw keys before lookup
+- Added `hash_api_key(...)` using SHA-256 for the project-level secret-storage boundary.
+- Updated tests to assert stored records contain the hash and do not store the raw key.
+- Responsibility checkpoint:
+  - `generate_api_key(...)` owns secure raw key generation
+  - `hash_api_key(...)` owns raw key to stored hash conversion
+  - `APIKeyRecord` stores `api_key_hash`
+  - public functions still accept/return raw API keys at the boundary
+- Ran project 03 tests: 9 passed.
+
+Session update:
+
+- Added API key expiry pressure.
+- Changed `APIKeyRecord` metadata from only creation/revocation data to also include:
+  - `created_at`
+  - `expires_at`
+- Switched the timestamp fields to `datetime.datetime` values instead of strings so expiry can be compared as time, not text.
+- Added a default API key lifetime of 30 days.
+- Updated `create_api_key(...)` so it stores both the creation time and expiry time.
+- Updated `validate_api_key(...)` so valid now means:
+  - key exists
+  - key is not revoked
+  - current time is before `expires_at`
+- Kept current time injectable for tests:
+  - production callers can omit it and use `datetime.datetime.now()`
+  - tests can pass a fixed time and avoid flaky clock-dependent behavior
+- Added an expired-key test.
+- Added an autouse test fixture to clear the in-memory store between tests.
+- Responsibility checkpoint:
+  - `APIKeyRecord` owns expiry metadata
+  - `create_api_key(...)` owns assigning expiry at creation time
+  - `validate_api_key(...)` owns the final validity decision
+  - tests own fixed time values to make time behavior deterministic
+- Ran project 03 tests: 10 passed.
+
+Session update:
+
+- Added dashboard listing pressure.
+- Clarified the split:
+  - creation/revocation/listing are dashboard/admin management flows
+  - validation is the real-time request-auth flow
+- Added `APIKeyValidationResult` so validation returns a safe contract instead of only a bool:
+  - `is_valid`
+  - `user_id`
+- Clarified why this matters:
+  - incoming API requests usually only carry the raw API key
+  - the backend learns the acting `user_id` by validating and looking up the key
+  - downstream systems use that `user_id` for business logic, authorization, rate limiting, billing, and audit logs
+- Added `APIKeyStore.find_records_for_user(user_id)`.
+- Added `list_api_keys(user_id)` as the dashboard-facing listing use case.
+- Listing returns stored metadata records for the user; it does not reveal raw API keys.
+- Added tests for:
+  - valid validation result includes `user_id`
+  - invalid validation result has `user_id=None`
+  - listing returns only the selected user's records
+  - listing returns an empty list when the user has no keys
+- Responsibility checkpoint:
+  - `APIKeyValidationResult` owns the safe validation response shape
+  - `APIKeyStore` owns storage lookup details
+  - `list_api_keys(...)` owns the dashboard listing use case
+- Ran project 03 tests: 12 passed.
+
+Session update:
+
+- Added dashboard-safe display contract pressure.
+- Clarified the issue:
+  - `APIKeyRecord` is an internal storage record
+  - it contains `api_key_hash`
+  - dashboard listing should not expose internal secret/hash storage details
+- Added `APIKeyDisplayRecord` with safe dashboard fields:
+  - `user_id`
+  - `created_at`
+  - `expires_at`
+  - `revoked`
+- Kept `APIKeyStore.find_records_for_user(...)` returning internal `APIKeyRecord` objects because the store owns storage data, not dashboard formatting.
+- Updated `list_api_keys(...)` to convert internal records into `APIKeyDisplayRecord` objects.
+- Responsibility checkpoint:
+  - `APIKeyRecord` owns internal stored metadata
+  - `APIKeyDisplayRecord` owns dashboard-safe display shape
+  - `APIKeyStore` owns finding stored records
+  - `list_api_keys(...)` owns converting stored records into dashboard output
+- Ran project 03 tests: 12 passed.
+
+Session update:
+
+- Added public key identity pressure.
+- Clarified the distinction:
+  - raw API key secret is used for runtime authentication
+  - `api_key_hash` is stored internally so the raw secret is not stored
+  - `key_id` is a safe public/dashboard identity for managing a stored key
+- Added `key_id` to `APIKeyRecord`.
+- Added `key_id` to `APIKeyDisplayRecord` so dashboard rows can identify which key the user wants to manage.
+- Updated revoke behavior to use the dashboard-safe identity:
+  - `revoke_api_key(key_id, user_id)`
+  - store finds the record by `key_id`
+  - revoke still checks `user_id` ownership before mutating the record
+- Added `APIKeyStore.find_record_by_key_id(...)`.
+- Fixed the partial migration errors from changing revoke from raw-key based to key-id based.
+- Responsibility checkpoint:
+  - `key_id` owns safe public identity for one stored key
+  - raw API key owns authentication proof at runtime
+  - `api_key_hash` owns internal lookup for runtime validation
+  - `revoke_api_key(...)` owns dashboard-safe revoke by key identity plus user ownership check
+- Ran project 03 tests: 12 passed.
+
+Session update:
+
+- Added module responsibility split after `api.py` became too broad.
+- Created `models.py` for data contracts:
+  - `APIKeyRecord`
+  - `APIKeyValidationResult`
+  - `APIKeyDisplayRecord`
+- Created `store.py` for storage responsibility:
+  - `APIKeyStore`
+  - `api_key_directory`
+- Created `security.py` for secret-handling helpers:
+  - `generate_api_key(...)`
+  - `hash_api_key(...)`
+- Kept `DEFAULT_API_KEY_LIFETIME` in `api.py` because the 30-day expiry is a key lifecycle policy applied by `create_api_key(...)`, not a secret-generation mechanism.
+- Kept `api.py` focused on use cases:
+  - `create_api_key(...)`
+  - `validate_api_key(...)`
+  - `revoke_api_key(...)`
+  - `list_api_keys(...)`
+- Updated tests to import concepts from the modules that now own them.
+- Responsibility checkpoint:
+  - models own data shape
+  - store owns persistence-like behavior
+  - security owns secret generation/hash conversion
+  - api owns API-key workflows and lifecycle policy
+- Ran project 03 tests: 12 passed.
+
 ## Working Agreement
 
 - We prioritize projects over theory.

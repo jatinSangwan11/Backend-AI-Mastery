@@ -1351,3 +1351,799 @@ Important:
 Do not catch every Exception by default.
 Catch the boundary error you intentionally understand.
 ```
+
+## Project 03 Starting Context: API Key Management System
+
+API keys solve this backend problem:
+
+```text
+When a client calls our API, how do we know who is calling and whether they are allowed?
+```
+
+Basic request pipeline:
+
+```text
+client request includes API key
+-> backend validates API key
+-> request is allowed or rejected
+```
+
+Without API key management:
+
+```text
+anyone can call the API
+we do not know who is calling
+we cannot revoke access
+we cannot attach usage/billing/permissions to a caller
+```
+
+Project 03 starts with the smallest flow:
+
+```text
+create API key for a user
+validate that key
+reject unknown key
+```
+
+## Project 03 Bottleneck 01: Key String Vs Key Metadata
+
+The first naive store held only key strings.
+
+That was enough to answer:
+
+```text
+does this key exist?
+```
+
+But it could not cleanly answer:
+
+```text
+who owns this key?
+when was it created?
+has it been revoked?
+```
+
+So we introduced a data object:
+
+```python
+@dataclass
+class APIKeyRecord:
+    api_key: str
+    user_id: str
+    created_at: str
+    revoked: bool
+```
+
+Responsibility:
+
+```text
+APIKeyRecord owns stored metadata for one API key.
+```
+
+This is a data object, like `PaymentResult` in Project 02.
+
+## Project 03 Bottleneck 02: Existence Vs Validity
+
+Once `APIKeyRecord` had `revoked`, validation needed a sharper meaning.
+
+Old meaning:
+
+```text
+valid = key exists
+```
+
+New meaning:
+
+```text
+valid = key exists and is not revoked
+```
+
+Responsibility:
+
+```text
+validate_api_key owns deciding whether an incoming key is currently usable.
+```
+
+## Project 03 Bottleneck 03: Revoke Behavior And Caller Signal
+
+Adding `revoked` as data was not enough. The system needed behavior:
+
+```text
+user wants to revoke an API key
+```
+
+`revoke_api_key(api_key, user_id)` now owns:
+
+```text
+find the matching key
+make sure it belongs to the user
+mark it revoked
+tell caller whether a matching key was found
+```
+
+Return value:
+
+```text
+True  -> matching key found and revoked
+False -> no matching key for that user
+```
+
+Important distinction:
+
+```text
+revoked usually means the record still exists but cannot be used.
+deleted usually means the record is removed or hidden.
+```
+
+For API keys, revoke is often better than delete because audit/security systems may need to remember that the key existed.
+
+## Project 03 Bottleneck 04: Store Responsibility
+
+The first implementation used a global list directly.
+
+The problem was not that in-memory storage is bad. For this project, an in-memory store is fine.
+
+The pressure was:
+
+```text
+storage access logic was spreading across functions
+```
+
+So we introduced:
+
+```python
+class APIKeyStore:
+    def add_api_key(self, api_key_record: APIKeyRecord) -> str:
+        ...
+
+    def find_record(self, api_key: str) -> APIKeyRecord | None:
+        ...
+```
+
+Responsibility:
+
+```text
+APIKeyStore owns storing and finding API key records.
+```
+
+The current module has one shared store instance:
+
+```python
+api_key_directory = APIKeyStore()
+```
+
+This represents one in-memory system store, not one store per user. It can hold records for many users.
+
+## Project 03 Bottleneck 05: Creation Workflow And Key Generation
+
+`create_api_key(...)` began by directly generating the key string inside itself.
+
+We extracted:
+
+```python
+def generate_api_key(user_id: str) -> str:
+    ...
+```
+
+Responsibility:
+
+```text
+generate_api_key owns key string generation.
+create_api_key owns the creation workflow.
+```
+
+Current `create_api_key(...)` does multiple steps:
+
+```text
+generate candidate key
+check store for duplicate
+create APIKeyRecord
+save record in APIKeyStore
+return key string
+```
+
+This is a reasonable tradeoff for now because `create_api_key(...)` is orchestrating the creation workflow and delegating details:
+
+```text
+key generation detail -> generate_api_key(...)
+storage detail        -> APIKeyStore.add_api_key/find_record
+metadata shape        -> APIKeyRecord
+```
+
+This is not "one function doing everything" in the same bad way as before. It is a workflow function coordinating smaller responsibility owners.
+
+Remaining pressure:
+
+```text
+The duplicate-key loop exists, but testing it is hard because generate_api_key uses random internally.
+```
+
+## Project 03 Bottleneck 06: Hidden Randomness And Test Control
+
+Production API keys should be unpredictable.
+
+But tests need control.
+
+The pressure:
+
+```text
+How do we test duplicate-key handling if generate_api_key(...) uses random internally?
+```
+
+Scenario we need to force:
+
+```text
+store already has "sk-existing-user_40"
+first generated key  -> "sk-existing-user_40"  # collision
+second generated key -> "sk-unique-user_40"    # unique
+```
+
+If random generation is hidden inside `create_api_key(...)`, the test cannot reliably force that sequence.
+
+So we made key generation injectable:
+
+```python
+def create_api_key(
+    user: str,
+    key_generator: Callable[[str], str] = generate_api_key,
+) -> str:
+    ...
+```
+
+Normal code can still call:
+
+```python
+create_api_key("user_40")
+```
+
+Tests can pass a fake generator:
+
+```python
+generated_keys = ["sk-existing-user_40", "sk-unique-user_40"]
+
+def fake_key_generator(user_id: str) -> str:
+    return generated_keys.pop(0)
+```
+
+Responsibility split:
+
+```text
+generate_api_key(...) -> real key generation
+fake generator        -> controlled test key generation
+create_api_key(...)   -> creation workflow and duplicate avoidance
+APIKeyStore           -> lookup/storage
+```
+
+This is dependency injection again:
+
+```text
+create_api_key depends on key generation, so tests can pass that dependency in.
+```
+
+Important distinction:
+
+```text
+Business behavior still wants unpredictable keys.
+Tests want deterministic keys.
+Good design lets both exist.
+```
+
+## Project 03 Bottleneck 07: API Keys Are Secrets
+
+The old key generation style was not appropriate for secrets:
+
+```python
+random.randint(0, 1000)
+```
+
+Problems:
+
+```text
+small search space
+predictable/general-purpose randomness
+user_id embedded in the key
+```
+
+API keys are bearer secrets:
+
+```text
+whoever has the key can act as that caller
+```
+
+So generation should use secure randomness:
+
+```python
+import secrets
+
+def generate_api_key(user_id: str) -> str:
+    return f"sk-{secrets.token_urlsafe(32)}"
+```
+
+Important distinction:
+
+```text
+random.randint(...) uses normal pseudo-random generation.
+secrets.token_urlsafe(...) uses OS-backed randomness through SystemRandom.
+```
+
+`user_id` is no longer embedded in the raw key. Ownership lives in metadata:
+
+```python
+APIKeyRecord.user_id
+```
+
+## Project 03 Bottleneck 08: Do Not Store Raw API Keys
+
+Storing raw API keys is dangerous.
+
+If the store leaks and raw keys are present:
+
+```text
+attackers can use those keys directly
+```
+
+Better boundary:
+
+```text
+raw API key -> shown/returned to user once
+hashed API key -> stored by backend
+```
+
+Current helper:
+
+```python
+def hash_api_key(api_key: str) -> str:
+    return hashlib.sha256(api_key.encode()).hexdigest()
+```
+
+Creation flow:
+
+```text
+generate raw API key
+hash raw API key
+store APIKeyRecord(api_key_hash=...)
+return raw API key to caller
+```
+
+Validation flow:
+
+```text
+receive raw API key
+hash incoming raw key
+find record by hash
+valid if record exists and is not revoked
+```
+
+Revoke flow:
+
+```text
+receive raw API key
+hash incoming raw key
+find record by hash
+revoke only if user_id matches
+```
+
+Responsibility split:
+
+```text
+generate_api_key(...) -> secure raw key generation
+hash_api_key(...)     -> raw key to stored hash conversion
+APIKeyRecord          -> stores api_key_hash, not raw api_key
+APIKeyStore           -> finds records by stored hash
+public functions      -> accept/return raw keys at the system boundary
+```
+
+This is similar to password storage:
+
+```text
+do not store raw secret; store a hash.
+```
+
+## Project 03 Bottleneck 09: API Key Expiry And Current Time
+
+The next pressure:
+
+```text
+API keys should not always live forever.
+```
+
+So validity grew again.
+
+Before:
+
+```text
+valid = key exists and is not revoked
+```
+
+Now:
+
+```text
+valid = key exists and is not revoked and is not expired
+```
+
+That means the stored record needs expiry metadata:
+
+```python
+@dataclass
+class APIKeyRecord:
+    api_key_hash: str
+    user_id: str
+    created_at: datetime.datetime
+    expires_at: datetime.datetime
+    revoked: bool
+```
+
+Important responsibility split:
+
+```text
+APIKeyRecord        -> owns stored metadata, including expiry
+create_api_key(...) -> decides created_at and expires_at when the key is created
+validate_api_key(...) -> decides whether the key is valid at the current time
+```
+
+The subtle pressure is time.
+
+This works in production:
+
+```python
+datetime.datetime.now()
+```
+
+But if `validate_api_key(...)` always reads the real clock internally, tests become harder to control.
+
+Example:
+
+```text
+test wants to prove "this key is expired"
+```
+
+If the function secretly uses the real current time, the test has to wait for real time or build awkward setup around the wall clock.
+
+So we made current time injectable:
+
+```python
+def validate_api_key(
+    api_key: str,
+    current_time: datetime.datetime | None = None,
+) -> bool:
+    if current_time is None:
+        current_time = datetime.datetime.now()
+```
+
+Normal runtime usage can stay simple:
+
+```python
+validate_api_key(api_key)
+```
+
+Tests can freeze time:
+
+```python
+validate_api_key(api_key, datetime.datetime(2026, 9, 17, 10, 0, 0))
+```
+
+Mental model:
+
+```text
+validate_api_key owns the validity decision.
+It does not need to hide the source of current time.
+```
+
+This is the same kind of dependency pressure we saw with random key generation:
+
+```text
+hidden randomness -> hard to test collisions
+hidden current time -> hard to test expiry
+```
+
+## Project 03 Bottleneck 10: Validation Result And Dashboard Listing
+
+The runtime validation flow needs more than a bool.
+
+Incoming request:
+
+```text
+client sends raw API key
+backend hashes it
+backend finds the stored record
+backend decides whether the key is usable
+```
+
+If validation returns only `True`, the backend still does not know who the request is acting as.
+
+So validation now returns a safe result contract:
+
+```python
+@dataclass
+class APIKeyValidationResult:
+    is_valid: bool
+    user_id: str | None
+```
+
+Valid result:
+
+```python
+APIKeyValidationResult(True, "user_40")
+```
+
+Invalid result:
+
+```python
+APIKeyValidationResult(False, None)
+```
+
+Why `user_id` matters after validation:
+
+```text
+authorization -> can this user access this resource?
+business logic -> fetch this user's data
+rate limiting -> count requests for this user
+billing/usage -> charge or track usage for this user
+audit logs -> record who performed the action
+```
+
+This also clarified the two sides of the API key system:
+
+```text
+dashboard/admin flow:
+create key, revoke key, list keys
+
+runtime request flow:
+validate key on every incoming request
+```
+
+Dashboard listing pressure:
+
+```text
+user wants to see their API keys
+```
+
+But raw API keys are secrets. After creation, the dashboard should not show the full raw key again.
+
+For now, listing returns stored metadata records:
+
+```python
+def list_api_keys(user_id: str) -> list[APIKeyRecord]:
+    return api_key_directory.find_records_for_user(user_id)
+```
+
+Storage lookup belongs in the store:
+
+```python
+def find_records_for_user(self, user_id: str) -> list[APIKeyRecord]:
+    return [
+        api_key_record
+        for api_key_record in self.api_keys_directory
+        if api_key_record.user_id == user_id
+    ]
+```
+
+Responsibility split:
+
+```text
+APIKeyValidationResult -> safe validation response
+APIKeyStore            -> knows how records are stored/searched
+list_api_keys(...)     -> dashboard use case for listing user's key records
+validate_api_key(...)  -> runtime auth use case
+```
+
+Current limitation:
+
+```text
+listing returns APIKeyRecord, which includes api_key_hash.
+```
+
+That created the next pressure:
+
+```text
+dashboard output should not expose internal hash storage details
+```
+
+So we introduced a dashboard-safe display contract:
+
+```python
+@dataclass
+class APIKeyDisplayRecord:
+    key_id: str
+    user_id: str
+    created_at: datetime.datetime
+    expires_at: datetime.datetime
+    revoked: bool
+```
+
+The store still returns internal records:
+
+```python
+def find_records_for_user(self, user_id: str) -> list[APIKeyRecord]:
+    ...
+```
+
+Then the dashboard use case converts them:
+
+```python
+def list_api_keys(user_id: str) -> list[APIKeyDisplayRecord]:
+    records = api_key_directory.find_records_for_user(user_id)
+    return [
+        APIKeyDisplayRecord(
+            record.key_id,
+            record.user_id,
+            record.created_at,
+            record.expires_at,
+            record.revoked,
+        )
+        for record in records
+    ]
+```
+
+Responsibility split:
+
+```text
+APIKeyRecord        -> internal storage shape
+APIKeyDisplayRecord -> safe dashboard output shape
+APIKeyStore         -> finds stored records
+list_api_keys(...)  -> converts internal records into dashboard output
+```
+
+Production dashboards usually include a safer display model with fields like:
+
+```text
+key id
+key prefix
+created_at
+expires_at
+revoked
+last_used_at
+```
+
+The next pressure is the difference between:
+
+```text
+secret value used for authentication
+public key identity used for dashboard management
+```
+
+## Project 03 Bottleneck 11: Public Key Identity Vs Secret Value
+
+Dashboard management needs to identify one key row.
+
+Example:
+
+```text
+user opens dashboard
+dashboard lists API keys
+user clicks revoke on one row
+backend receives: revoke this specific key
+```
+
+The dashboard cannot send the full raw API key back, because raw API keys are secrets and are only shown once at creation time.
+
+So we added a safe public identity:
+
+```text
+key_id
+```
+
+Important distinction:
+
+```text
+raw API key secret -> used by clients at runtime for authentication
+api_key_hash       -> stored internally for validation lookup
+key_id             -> safe dashboard identity for managing a key
+```
+
+`key_id` belongs in the stored record because the backend must be able to find the same key later:
+
+```python
+@dataclass
+class APIKeyRecord:
+    key_id: str
+    api_key_hash: str
+    user_id: str
+    created_at: datetime.datetime
+    expires_at: datetime.datetime
+    revoked: bool
+```
+
+The display contract also exposes it:
+
+```python
+@dataclass
+class APIKeyDisplayRecord:
+    key_id: str
+    user_id: str
+    created_at: datetime.datetime
+    expires_at: datetime.datetime
+    revoked: bool
+```
+
+Revoke can now use the dashboard-safe id:
+
+```python
+def revoke_api_key(key_id: str, user_id: str) -> bool:
+    record = api_key_directory.find_record_by_key_id(key_id)
+    if record and record.user_id == user_id:
+        record.revoked = True
+        return True
+
+    return False
+```
+
+Responsibility split:
+
+```text
+APIKeyRecord        -> stores both secret hash and public key identity
+APIKeyDisplayRecord -> exposes safe dashboard fields, including key_id
+APIKeyStore         -> finds records by hash, user_id, or key_id
+validate_api_key    -> uses raw key -> hash for runtime auth
+revoke_api_key      -> uses key_id + user_id for dashboard management
+```
+
+This is a common production shape:
+
+```text
+authentication path uses secrets
+management path uses safe ids
+```
+
+## Project 03 Bottleneck 12: Module Responsibility Split
+
+`api.py` started as a simple learning file.
+
+Over time it accumulated:
+
+```text
+data contracts
+in-memory storage
+secret generation
+hashing
+creation workflow
+validation workflow
+revoke workflow
+listing workflow
+expiry policy
+```
+
+The code worked, but the module responsibility became too broad.
+
+So we split by ownership:
+
+```text
+models.py
+-> APIKeyRecord
+-> APIKeyValidationResult
+-> APIKeyDisplayRecord
+
+store.py
+-> APIKeyStore
+-> api_key_directory
+
+security.py
+-> generate_api_key(...)
+-> hash_api_key(...)
+
+api.py
+-> DEFAULT_API_KEY_LIFETIME
+-> create_api_key(...)
+-> validate_api_key(...)
+-> revoke_api_key(...)
+-> list_api_keys(...)
+```
+
+Why `DEFAULT_API_KEY_LIFETIME` stayed in `api.py`:
+
+```text
+generate_api_key(...) owns making a secure secret.
+hash_api_key(...) owns converting raw secret to stored hash.
+create_api_key(...) owns the lifecycle policy for a newly created key.
+```
+
+So the 30-day lifetime is a workflow/policy decision, not a secret-generation detail.
+
+Responsibility split:
+
+```text
+models  -> data shapes
+store   -> persistence-like lookup/storage behavior
+security -> secret handling
+api     -> use-case workflows and lifecycle policy
+```
