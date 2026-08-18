@@ -31,28 +31,32 @@ Workspace:
 Current branch:
 
 ```text
-Phase-1.1
+main
 ```
 
 Current project:
 
 ```text
-Phase 1: Python OOP + LLD
-Project 01: Notification System
+Phase 2: Advanced OOP + LLD + DB Design + FastAPI
+Next project: Inventory and Order Management
 ```
 
 Current test command:
 
 ```bash
-cd /Users/jatin.sangwan/dev/backend-ai-mastery/projects/01-oop-lld-notifications
-../../.venv/bin/python -m pytest
+Project-specific test command will be chosen when Phase 2 starts.
 ```
 
 Current status:
 
 - Single repo-level virtualenv at `.venv`.
 - Duplicate project-local virtualenvs were removed.
-- Project tests currently pass.
+- Phase 1 is complete.
+- Project 01 tests: 11 passed.
+- Project 02 tests: 12 passed.
+- Project 03 tests: 12 passed.
+- Project 03 is wrapped and should not be reopened for cleanup unless explicitly requested.
+- Roadmap has been revamped: skip the old Rate Limiter and Background Job Runner sequence for now and move into deeper LLD + DB + FastAPI work.
 
 ## Teaching Style
 
@@ -73,6 +77,7 @@ Teaching should follow this style:
 - Codex may update markdown notes/progress with concise revision-worthy insights.
 - Codex should preserve the Project 01 teaching pattern: naive implementation, added requirement, visible pain, refactor, vocabulary, tests, notes.
 - Do not start by naming the topic. Create or inspect the bottleneck first, then name the idea after Jatin has reasoned through it.
+- After the concept has landed, reveal the concept/pattern/principle name clearly so Jatin can connect intuition to interview vocabulary.
 - Keep asking responsibility questions: what does this function/class/module own, what does it know, and what should it not know?
 - When Jatin says a step feels too fast, slow down, discuss, and if needed revert only Codex's own last change.
 - Codex may code directly when Jatin explicitly asks, especially for mechanical refactors, test updates, note/progress updates, and module splits.
@@ -93,12 +98,12 @@ Bottleneck -> requirement pressure -> Jatin's intuition -> small code step -> te
 
 There are 4 phases.
 
-### Phase 1: Python OOP + LLD
+### Phase 1: OOP And LLD Foundations
 
 Goal:
 
 ```text
-Build object-design intuition through backend-flavored systems.
+Build initial object-design intuition through small backend-flavored systems.
 ```
 
 Projects:
@@ -106,8 +111,11 @@ Projects:
 1. Notification System
 2. Payment Provider System
 3. API Key Management System
-4. Rate Limiter
-5. Background Job Runner
+Status:
+
+```text
+Done.
+```
 
 Core learning:
 
@@ -124,38 +132,61 @@ Core learning:
 - SOLID through refactoring pressure
 - design patterns through project pressure
 
-### Phase 2: FastAPI Foundations
+### Phase 2: Advanced OOP + LLD + DB Design + FastAPI
 
 Goal:
 
 ```text
-Turn clean Python design into real backend APIs.
+Go deeper on production-style object design, SOLID, design patterns, database design, ORM boundaries, and thin FastAPI APIs, while building enough LLD judgment and vocabulary to be ready for Big Tech LLD interviews.
 ```
 
-Topics:
+Projects:
 
-- routers
-- Pydantic schemas
-- service layer
-- repository layer
-- dependency injection
-- SQLAlchemy/SQLModel
-- Alembic migrations
-- error handling
-- middleware
-- auth/RBAC basics
+1. Inventory and Order Management
+2. Movie Ticket Booking
+3. E-commerce Checkout Capstone
+
+The first two projects are required. The third is the Phase 2 capstone if time allows, or it becomes the bridge into Phase 3.
+
+Learning sequence:
+
+```text
+Pure Python design first -> DB design second -> ORM/repository third -> FastAPI last
+```
+
+Core learning:
+
+- advanced OOP
+- SOLID through production pressure
+- design patterns through backend domains
+- entity/value-object thinking
+- domain services vs application services
+- repository and unit-of-work boundaries
+- database constraints and transaction boundaries
+- SQLAlchemy/SQLModel and Alembic
+- thin FastAPI route handlers
 - API tests with pytest/httpx
+- Big Tech LLD readiness:
+  - requirement clarification
+  - entity and relationship modeling
+  - responsibility assignment
+  - method/API contract design
+  - state transitions
+  - schema design and constraints
+  - tradeoff explanation
+  - timed LLD mock rounds after project depth is built
 
 ### Phase 3: Advanced Backend
 
 Goal:
 
 ```text
-Learn production backend patterns.
+Learn production backend patterns while keeping LLD, responsibility boundaries, SOLID, and design tradeoffs in the loop.
 ```
 
 Topics:
 
+- LLD under scale and failure pressure
 - async jobs
 - Redis
 - caching
@@ -172,11 +203,12 @@ Topics:
 Goal:
 
 ```text
-Design and build production-style AI backend systems.
+Design and build production-style AI backend systems while continuing to apply LLD, responsibility boundaries, SOLID, and design tradeoffs.
 ```
 
 Topics:
 
+- LLD for AI backend workflows
 - document ingestion
 - parsing
 - chunking
@@ -202,7 +234,7 @@ Working plan:
 Target:
 
 ```text
-Phase 1 by around Aug 25 if pace stays consistent.
+Phase 2 depth is now prioritized over rushing through the older Rate Limiter and Background Job Runner sequence.
 Strong interview-readiness foundation by around Oct 10.
 ```
 

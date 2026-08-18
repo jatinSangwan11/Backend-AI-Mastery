@@ -2230,3 +2230,157 @@ service object with injected store
 ```
 
 These are not forgotten. They are future pressure points for later projects.
+
+## Phase 2 Direction: Advanced OOP, LLD, DB Design, And FastAPI
+
+Phase 1 is complete after the first three foundation projects.
+
+The next learning target is not more small isolated OOP examples. The next target is larger backend domains where object responsibilities, SOLID, design patterns, database design, and API boundaries all create real pressure.
+
+New Phase 2 rule:
+
+```text
+Pure Python design first -> DB design second -> ORM/repository third -> FastAPI last
+```
+
+Why:
+
+- If FastAPI comes first, route handlers can hide weak domain design.
+- If SQLAlchemy comes first, ORM shape can accidentally become the domain model.
+- If DB tables come first without domain pressure, schema design becomes memorization.
+- If pure Python design comes first, we can ask what the objects own before adding persistence and HTTP.
+
+Guardrails:
+
+```text
+No FastAPI route until we can explain what the route orchestrates.
+No ORM model until we can explain what the domain object owns.
+No database table until we can explain what invariant the database must protect.
+```
+
+Phase 2 should go deeper on:
+
+```text
+encapsulation
+invariants
+entities vs value objects
+domain services vs application services
+abstract base classes vs protocols
+inheritance vs composition
+polymorphism
+state transitions
+domain exceptions
+SOLID principles
+database constraints
+transaction boundaries
+repositories
+unit of work
+thin route handlers
+```
+
+Phase 2 should also build Big Tech LLD interview readiness.
+
+That means Jatin should practice not only writing the code, but also explaining the design:
+
+```text
+requirements
+actors/use cases
+entities and relationships
+class responsibilities
+method/API contracts
+state transitions
+schema design
+constraints and transactions
+extensibility
+tradeoffs
+pattern/principle vocabulary
+```
+
+Phase 2 is considered successful only if the project work is paired with design explanation and timed LLD mock rounds after enough depth is built.
+
+Design patterns will be learned through backend pressure, not as isolated trivia:
+
+```text
+Strategy
+Factory
+Adapter
+Repository
+Unit of Work
+State
+Command
+Observer / Publisher-Subscriber
+Decorator
+Template Method
+Chain of Responsibility
+Specification
+Builder
+Singleton mostly as a caution
+```
+
+Phase 2 projects:
+
+```text
+1. Inventory and Order Management
+2. Movie Ticket Booking
+3. E-commerce Checkout Capstone if time allows
+```
+
+The first two projects are required. The third is the capstone if time allows, or it becomes the bridge into the Advanced Backend phase.
+
+Teaching rule refinement:
+
+```text
+Pressure first -> Jatin reasons -> code/refactor -> reveal the concept name clearly.
+```
+
+The concept name matters for interviews, but it should come after the intuition. For example, first feel why replaceable pricing logic is useful, then name Strategy.
+
+The old Rate Limiter and Background Job Runner ideas are not discarded. They move naturally into the Advanced Backend phase, where Redis, async workers, retries, concurrency, and production infrastructure make them more useful.
+
+## LLD Continuity Across Later Phases
+
+LLD remains in the loop during Phase 3 and Phase 4.
+
+Phase 3 adds production backend pressure:
+
+```text
+scale
+failure
+async execution
+queues
+Redis
+caching
+retries
+timeouts
+idempotency
+observability
+multi-tenancy
+```
+
+Phase 4 adds AI backend pressure:
+
+```text
+ingestion
+parsing
+chunking
+embeddings
+vector search
+RAG
+streaming
+citations
+evals
+cost/latency tracking
+safety and access control
+```
+
+But the design questions stay:
+
+```text
+What owns this behavior?
+What does this component know?
+What should it not know?
+What changes together?
+What boundary protects this failure mode?
+What invariant should code protect?
+What invariant should storage protect?
+```

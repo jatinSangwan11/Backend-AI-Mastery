@@ -554,6 +554,79 @@ Project 03 closing checkpoint:
   - Project 03 tests: 12 passed.
 - We are ready to move to the next Phase 1 project in a new session.
 
+## 2026-08-18
+
+Roadmap revision:
+
+- Phase 1 is now officially treated as complete after three foundation projects:
+  - Project 01: Notification System
+  - Project 02: Payment Provider System
+  - Project 03: API Key Management System
+- Decided not to continue with the old Phase 1 sequence of Rate Limiter and Background Job Runner right now.
+- Reason:
+  - the current goal is to go deeper on OOP, LLD, SOLID, design patterns, and DB design
+  - Rate Limiter and Background Job Runner are still valuable, but they fit better later with Redis, async workers, and advanced backend production topics
+- Locked the new Phase 2:
+  - Advanced OOP + LLD + DB Design + FastAPI
+- Phase 2 learning sequence:
+  - pure Python design first
+  - DB design second
+  - ORM/repository third
+  - FastAPI last
+- New Phase 2 projects:
+  - Inventory and Order Management
+  - Movie Ticket Booking
+  - E-commerce Checkout Capstone if time allows, otherwise as the bridge into Phase 3
+- Teaching style remains unchanged:
+  - discussion first, code second
+  - pressure before principle
+  - let Jatin reason before naming patterns
+  - after a concept lands, reveal the concept/pattern/principle name clearly for interview vocabulary
+  - ask responsibility questions
+  - Jatin types meaningful code when syntax muscle memory matters
+  - Codex may edit notes/progress and mechanical scaffolding when explicitly asked
+- Updated `ROADMAP.md` and `SESSION_CONTEXT.md` so future sessions resume from the new plan.
+
+Phase 2 project count refinement:
+
+- Decided Phase 2 should use 2-3 deeper projects instead of five thinner ones.
+- Reason:
+  - the goal is not to finish many project names
+  - the goal is to deeply cover advanced OOP, SOLID, design patterns, DB design, ORM boundaries, FastAPI, and API tests
+- Locked expectation:
+  - Project 01 of Phase 2: Inventory and Order Management
+  - Project 02 of Phase 2: Movie Ticket Booking
+  - Project 03 of Phase 2: E-commerce Checkout Capstone if time allows
+
+Phase 2 interview-readiness lock:
+
+- Phase 2 should cover the advanced OOP, SOLID, design pattern, DB design, ORM, FastAPI, and API testing topics discussed above.
+- Phase 2 is also expected to make Jatin capable enough for Big Tech-style LLD interviews, with one important condition:
+  - project implementation must be paired with design explanation practice
+  - after enough project depth, add timed LLD mock rounds
+- Interview readiness means Jatin should be able to:
+  - clarify requirements
+  - identify actors/use cases
+  - model entities and relationships
+  - assign class/module/service responsibilities
+  - design method/API contracts
+  - reason about state transitions
+  - explain DB tables, constraints, and transaction boundaries
+  - discuss extensibility and tradeoffs
+  - name the relevant SOLID principle or design pattern after the intuition is clear
+
+Phase 3 and Phase 4 continuity rule:
+
+- LLD does not stop after Phase 2.
+- Phase 3 adds production backend pressure while keeping responsibility boundaries, SOLID, and design tradeoffs in the loop.
+- Phase 4 adds AI backend pressure while continuing to use the same LLD lens.
+- In later phases, every system should still ask:
+  - what owns this behavior?
+  - what does this component know?
+  - what should it not know?
+  - what changes together?
+  - what boundary protects this failure mode?
+
 ## Working Agreement
 
 - We prioritize projects over theory.
