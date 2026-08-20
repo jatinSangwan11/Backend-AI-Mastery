@@ -1,4 +1,4 @@
-# Backend AI Mastery Session Context
+g# Backend AI Mastery Session Context
 
 ## Mentor Role
 
