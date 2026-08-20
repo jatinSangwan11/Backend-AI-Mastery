@@ -2550,3 +2550,130 @@ Next pressure:
 place_order(...) owns both order workflow and inventory mutation.
 Who should own stock behavior?
 ```
+
+## Project 04 Bottleneck 04: Order Workflow Knows Inventory Internals
+
+After multi-product all-or-nothing updates worked, `place_order(...)` still knew too much.
+
+It knew:
+
+```text
+inventory is a dict
+product names are keys
+quantities are values
+how to copy inventory
+how to check stock
+how to reduce stock
+how to commit copied inventory
+```
+
+That means order workflow was coupled to inventory storage details.
+
+Jatin's intuition:
+
+```text
+place_order should ask whether the order can be fulfilled.
+Inventory behavior should live in an inventory service that owns the inventory data.
+```
+
+Introduced:
+
+```text
+InventoryService
+```
+
+Current responsibility split:
+
+```text
+place_order:
+  coordinates order placement
+  asks inventory service to apply the stock behavior
+  returns the order result
+
+InventoryService:
+  owns the raw inventory dict
+  checks product existence
+  checks available quantity
+  applies all-or-nothing stock reduction
+  commits inventory changes only after validation succeeds
+```
+
+Important learning:
+
+```text
+Do not change too many boundaries at once.
+```
+
+The attempted move to `list[InventoryProduct]` plus `InventoryService` made the refactor harder to reason about. We kept the storage shape as:
+
+```python
+dict[str, int]
+```
+
+and first wrapped behavior around it.
+
+## Python Detail: `.copy()` On A Dict
+
+For the current inventory:
+
+```python
+inventory = {"iphone": 5, "macbook": 3}
+inventory_copy = inventory.copy()
+```
+
+`.copy()` creates a new shallow dict with the same key-value pairs.
+
+Changing the copy:
+
+```python
+inventory_copy["iphone"] = 2
+```
+
+does not change the original dict.
+
+Because the current values are integers, a shallow copy is enough. If values become nested mutable objects later, shallow vs deep copy will matter more.
+
+## Encapsulation
+
+Working definition:
+
+```text
+I know what outcome I need, but I delegate to the object/service that knows how its own data should be handled.
+```
+
+Sharper definition:
+
+```text
+Encapsulation hides internal data structure and exposes behavior through methods.
+```
+
+In Project 04:
+
+```text
+place_order(...) no longer directly reads or updates inventory[item.product_name].
+```
+
+Instead:
+
+```text
+place_order(...) asks InventoryService to handle stock behavior.
+```
+
+Concept name:
+
+```text
+Encapsulation / Responsibility Ownership
+```
+
+Current test result:
+
+```text
+6 passed
+```
+
+Next pressure for tomorrow:
+
+```text
+InventoryService currently returns OrderRecord.
+Is that inventory responsibility, or is order result language leaking into the inventory boundary?
+```

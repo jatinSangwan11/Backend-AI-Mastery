@@ -708,3 +708,32 @@ Next pressure:
   - raw inventory dict
   - order workflow
   - inventory object/service
+
+Same-day Project 04 checkpoint:
+
+- Introduced `InventoryService` as the owner of inventory behavior while keeping the inventory storage shape as `dict[str, int]`.
+- Removed the premature `InventoryProduct` list shape for now because changing storage representation and introducing a service at the same time created too much pressure.
+- Current responsibility split:
+  - `place_order(...)` coordinates order placement.
+  - `InventoryService` owns product existence checks, stock validation, stock reduction, copy-and-commit, and the raw inventory dict.
+- Updated the caller boundary so `place_order(...)` receives an `InventoryService`, not a raw inventory dict.
+- Discussed why `InventoryService.__init__(inventory: dict[str, int])` documents the current storage shape:
+  - product name as `str`
+  - available quantity as `int`
+- Discussed `.copy()`:
+  - creates a new shallow dict with the same key-value pairs
+  - safe for the current flat inventory because values are integers
+  - lets the workflow apply all changes to the copy before committing
+- Discussed encapsulation:
+  - `place_order(...)` knows what outcome it needs
+  - `InventoryService` knows how inventory data should be checked and changed
+  - inventory structure is hidden behind inventory behavior
+- Topic learned:
+  - Encapsulation / Responsibility Ownership
+- Ran project 04 tests after the refactor: 6 passed.
+
+Resume point:
+
+- Continue from the `InventoryService` boundary.
+- Next likely pressure: `InventoryService.reduce_stock_for_order(...)` returns `OrderRecord`, which may mean inventory logic is now leaking order-result language.
+- Ask whether inventory should return order-level results or inventory-level results/status.
