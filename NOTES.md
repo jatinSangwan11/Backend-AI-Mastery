@@ -2384,3 +2384,169 @@ What boundary protects this failure mode?
 What invariant should code protect?
 What invariant should storage protect?
 ```
+
+## Project 04 Starting Context: Inventory And Order Management
+
+Phase 2 starts with Inventory and Order Management.
+
+Learning rule:
+
+```text
+Pure Python design first -> DB design second -> ORM/repository third -> FastAPI last
+```
+
+Current project boundary:
+
+```text
+Cart = user intent
+Order = business commitment
+Inventory = stock truth
+Order workflow = coordinates whether the commitment can happen
+```
+
+For now, the project starts when the user attempts to place an order or checkout. It is not building the cart UI or cart-management system.
+
+Starter responsibility:
+
+```text
+accept requested items -> check inventory -> update inventory if valid -> return result to caller
+```
+
+## Project 04 Bottleneck 01: Boolean Result Is Too Weak
+
+The first naive version returned only `True` or `False`.
+
+That worked while there was one failure reason, but quickly became weak:
+
+```text
+False could mean product not found.
+False could mean insufficient stock.
+False could mean invalid requested quantity later.
+```
+
+The caller needs a stable result contract, not only a boolean.
+
+Introduced:
+
+```text
+OrderRecord(success, message, order_id)
+```
+
+Concept name:
+
+```text
+Result Contract / Result Object
+```
+
+Why it matters:
+
+- the caller gets a clear success/failure signal
+- the caller gets a human-readable reason
+- tests can assert deterministic result values
+- future API responses have a clearer shape
+
+## Project 04 Bottleneck 02: Single-Item Order Is Too Small
+
+The next requirement was multi-product order placement.
+
+A real order can request:
+
+```text
+2 iphones
+1 macbook
+3 airpods
+```
+
+So the input needed a new contract:
+
+```text
+UserOrder(product_name, quantity)
+```
+
+The workflow now accepts:
+
+```text
+list[UserOrder]
+```
+
+This moved the design from:
+
+```text
+one product + one quantity
+```
+
+to:
+
+```text
+many requested order items
+```
+
+## Project 04 Bottleneck 03: Partial Inventory Update
+
+Multi-product orders created a more serious pressure.
+
+Bad behavior:
+
+```text
+reduce iphone stock
+then discover macbook stock is insufficient
+return failure
+but iphone stock is already changed
+```
+
+That creates a half-updated system.
+
+Jatin proposed the right pure-Python shape:
+
+```text
+copy inventory -> apply requested changes to the copy -> commit only if the whole order succeeds
+```
+
+Important Python detail:
+
+```python
+inventory = inventory_copy
+```
+
+only rebinds the local function name. It does not update the caller's dict.
+
+To commit into the same dict object held by the caller:
+
+```python
+inventory.clear()
+inventory.update(inventory_copy)
+```
+
+Concept name:
+
+```text
+All-or-nothing update / commit-after-validation
+```
+
+This is the pure-Python intuition behind a later database transaction:
+
+```text
+try changes inside a protected boundary -> commit only if all checks pass
+```
+
+Current Project 04 tests cover:
+
+- single-item success
+- single-item insufficient stock
+- missing product
+- multi-item success
+- multi-item failure when one item is unavailable
+- multi-item failure when one item does not exist
+
+Current test result:
+
+```text
+6 passed
+```
+
+Next pressure:
+
+```text
+place_order(...) owns both order workflow and inventory mutation.
+Who should own stock behavior?
+```

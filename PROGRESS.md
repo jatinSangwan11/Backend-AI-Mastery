@@ -639,3 +639,72 @@ Phase 3 and Phase 4 continuity rule:
 - Codex should preserve the Project 01 pattern: naive implementation, added requirement, visible pain, refactor, vocabulary, tests, notes and also once the topic is complete tell jatin the name of the topic we just learned or if jatin asks you for the topic we are learning then tell him
 - You type substantial code for muscle memory whenever possible.
 - Git will be managed like a production repo once initialized.
+
+## 2026-08-20
+
+Started Phase 2, Project 04: Inventory and Order Management.
+
+Project path:
+
+- `projects/04-inventory-order-management/`
+
+Current files:
+
+- `order.py`
+- `tests/test_order.py`
+
+Initial pressure:
+
+- A user attempts to place an order.
+- The system checks whether requested product quantity is available.
+- If stock is available, inventory is reduced.
+- If stock is unavailable or the product does not exist, inventory is not changed.
+
+First result-contract pressure:
+
+- `True` / `False` became too weak because failure can mean multiple things:
+  - product not found
+  - insufficient stock
+- Introduced `OrderRecord` as a small dataclass result object:
+  - `success`
+  - `message`
+  - `order_id`
+- Tests compare deterministic dataclass values.
+
+Second pressure: multi-product orders.
+
+- `place_order(...)` now accepts a list of `UserOrder` items instead of one product and one quantity.
+- Introduced `UserOrder` as the ordered-item input contract:
+  - `product_name`
+  - `quantity`
+- Implemented all-or-nothing inventory update:
+  - copy inventory
+  - validate and apply every requested item to the copy
+  - commit back to the original inventory only after every item succeeds
+  - leave original inventory unchanged on any failure
+
+Topics learned:
+
+- Result Contract / Result Object
+- Dataclass equality in tests
+- Input contract for requested order items
+- Python name binding vs mutating a shared dict
+- Shallow copy is enough for the current flat inventory shape
+- All-or-nothing update / commit-after-validation
+- Early pure-Python version of transaction thinking
+
+Current Project 04 test result:
+
+- Ran project 04 tests: 6 passed.
+
+Next pressure:
+
+- `place_order(...)` still owns too much:
+  - product existence check
+  - stock validation
+  - stock mutation
+  - order workflow result
+- Next discussion should ask who owns stock behavior:
+  - raw inventory dict
+  - order workflow
+  - inventory object/service
