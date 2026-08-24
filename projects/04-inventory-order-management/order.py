@@ -1,20 +1,28 @@
 from dataclasses import dataclass
 
+
 @dataclass
 class OrderRecord:
     success: bool
     message: str
     order_id: str | None
 
+
 @dataclass
 class InventoryResult:
     success: bool
     message: str
 
+
 @dataclass
 class UserOrder:
     product_name: str
     quantity: int
+
+    def __post_init__(self) -> None:
+        if self.quantity <= 0:
+            raise ValueError("User order quantity should be greater than 0")
+
 
 @dataclass
 class InventoryProduct:
@@ -26,6 +34,7 @@ class InventoryProduct:
     def __post_init__(self) -> None:
         if self.quantity < 0:
             raise ValueError("Inventory quantity cannot be negative")
+
 
 class InventoryService:
     def __init__(self, inventory: dict[str, InventoryProduct]) -> None:
@@ -56,10 +65,14 @@ class InventoryService:
         return InventoryResult(True, "Stock reduced")
 
 
-def place_order(order_list: list[UserOrder], inventory_service: InventoryService) -> OrderRecord:
-    inventory_result = inventory_service.reduce_stock_for_order(order_list)
+class OrderService:
+    def __init__(self, inventory_service: InventoryService) -> None:
+        self.inventory_service = inventory_service
 
-    if not inventory_result.success:
-        return OrderRecord(False, inventory_result.message, None)
+    def place_order(self, order_list: list[UserOrder]) -> OrderRecord:
+        inventory_result = self.inventory_service.reduce_stock_for_order(order_list)
 
-    return OrderRecord(True, "Order placed", "order-1")
+        if not inventory_result.success:
+            return OrderRecord(False, inventory_result.message, None)
+
+        return OrderRecord(True, "Order placed", "order-1")

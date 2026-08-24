@@ -803,3 +803,33 @@ Next pressure:
 
 - Quantity is protected for `InventoryProduct`, but `UserOrder.quantity` can still be `0` or negative.
 - Ask whether an ordered item with zero/negative quantity is meaningful, and where that rule should live.
+
+Same-day continuation:
+
+- Added `UserOrder.__post_init__(...)` to protect the ordered-item quantity invariant.
+- `UserOrder.quantity` must be greater than zero.
+- Discussed why `__post_init__` is used in dataclasses:
+  - dataclass generates `__init__`
+  - `__post_init__` runs after field assignment
+  - it is the clean hook for validation/setup while keeping dataclass convenience
+- Introduced `OrderService` as the owner of the order placement workflow.
+- Removed the standalone `place_order(...)` function after tests were updated to call `OrderService.place_order(...)`.
+- Current responsibility split:
+  - `OrderService` owns order placement orchestration.
+  - `InventoryService` owns inventory data and stock behavior.
+  - `InventoryProduct` protects inventory-product validity.
+  - `UserOrder` protects requested-item validity.
+  - `OrderRecord` remains the caller-facing order result.
+- Discussed the LLD mental model:
+  - responsibility assignment: who owns each job
+  - boundaries: what each component can see/touch
+  - invariants: rules that must always be true
+  - collaboration: how components ask each other to do work without stealing responsibilities
+- Topic now visible:
+  - Single Responsibility Principle intuition
+- Ran project 04 tests after the `OrderService` refactor: 8 passed.
+
+Next pressure:
+
+- `OrderService` returns `order_id="order-1"`, but no real `Order` object is created or stored yet.
+- Move from caller-facing `OrderRecord` to an internal `Order` domain object with `order_id`, `items`, and `status`.

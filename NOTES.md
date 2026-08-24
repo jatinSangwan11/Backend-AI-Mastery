@@ -2853,3 +2853,138 @@ Next pressure:
 UserOrder.quantity can still be zero or negative.
 Should an ordered item protect its own quantity rule too?
 ```
+
+## Project 04 Bottleneck 08: Requested Quantity Invariant
+
+After protecting `InventoryProduct.quantity`, another invalid state was still possible:
+
+```python
+UserOrder("iphone", 0)
+UserOrder("iphone", -2)
+```
+
+That is dangerous because negative requested quantity can accidentally increase stock:
+
+```text
+5 - (-2) = 7
+```
+
+Invariant:
+
+```text
+UserOrder.quantity > 0
+```
+
+Why `UserOrder` owns this check:
+
+```text
+zero or negative quantity makes the requested order item itself invalid
+```
+
+Implemented with:
+
+```text
+UserOrder.__post_init__
+```
+
+Dataclass detail:
+
+```text
+__init__ = generated constructor that assigns fields
+__post_init__ = hook that runs after generated field assignment
+```
+
+Use `__post_init__` when a dataclass should keep generated constructor convenience but also enforce validation/setup.
+
+Concept:
+
+```text
+Input Invariant Protection
+```
+
+## Project 04 Bottleneck 09: Order Workflow Needs An Owner
+
+The standalone `place_order(...)` function had grown into an order workflow.
+
+It coordinated:
+
+```text
+requested order items
+inventory stock reduction
+inventory result -> order result translation
+caller-facing OrderRecord
+```
+
+Jatin's intuition:
+
+```text
+There should be an OrderService, and place_order should be part of it.
+OrderService should hold InventoryService and orchestrate the workflow.
+```
+
+Introduced:
+
+```text
+OrderService
+```
+
+Current collaboration:
+
+```text
+OrderService.place_order(order_list)
+  -> asks InventoryService.reduce_stock_for_order(order_list)
+  -> receives InventoryResult
+  -> returns OrderRecord
+```
+
+Responsibility split:
+
+```text
+OrderService:
+  owns order placement workflow
+
+InventoryService:
+  owns inventory data and stock behavior
+
+InventoryProduct:
+  protects inventory-product validity
+
+UserOrder:
+  protects requested-item validity
+
+OrderRecord:
+  caller-facing operation result
+```
+
+LLD mental model:
+
+```text
+LLD = responsibility assignment + boundaries + invariants + collaboration
+```
+
+Meaning:
+
+```text
+responsibility assignment = who owns each job
+boundaries = what each component can see or touch
+invariants = rules that must always stay true
+collaboration = how components ask each other to do work
+```
+
+Concept now visible:
+
+```text
+Single Responsibility Principle intuition
+```
+
+Current test result:
+
+```text
+8 passed
+```
+
+Next pressure:
+
+```text
+OrderService returns order_id="order-1", but no real Order object exists yet.
+```
