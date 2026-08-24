@@ -2677,3 +2677,179 @@ Next pressure for tomorrow:
 InventoryService currently returns OrderRecord.
 Is that inventory responsibility, or is order result language leaking into the inventory boundary?
 ```
+
+## Project 04 Bottleneck 05: Inventory Service Speaks Order Language
+
+`InventoryService.reduce_stock_for_order(...)` originally returned:
+
+```text
+OrderRecord
+```
+
+That meant inventory code knew order-level language:
+
+```text
+order_id
+"Order placed"
+```
+
+But inventory should not know whether an order was placed. It should only report whether inventory work succeeded.
+
+Introduced:
+
+```text
+InventoryResult(success, message)
+```
+
+Responsibility split:
+
+```text
+InventoryService:
+  returns inventory-level result
+
+place_order:
+  translates inventory-level result into order-level result
+```
+
+Concept:
+
+```text
+Boundary-specific result contracts
+```
+
+## Project 04 Bottleneck 06: Raw Quantity Dict Is Too Weak
+
+The inventory shape:
+
+```python
+dict[str, int]
+```
+
+could only express:
+
+```text
+product name -> quantity
+```
+
+But inventory records often need richer fields:
+
+```text
+product name
+quantity
+SKU
+category
+other metadata later
+```
+
+Introduced:
+
+```text
+InventoryProduct(product_name, quantity, sku, category)
+```
+
+SKU means:
+
+```text
+Stock Keeping Unit
+```
+
+It is a stable business/internal identifier for tracking a specific sellable item or variant.
+
+Storage changed to:
+
+```python
+dict[str, InventoryProduct]
+```
+
+Important design win:
+
+```text
+place_order(...) did not need to know that inventory storage changed.
+```
+
+That is the payoff from the `InventoryService` boundary.
+
+## Python Detail: Shallow Copy With Object Values
+
+With:
+
+```python
+inventory_copy = self.inventory.copy()
+```
+
+Python creates a new dict container, but it does not clone the `InventoryProduct` objects inside.
+
+Mental model:
+
+```text
+self.inventory["iphone"] ----\
+                              > InventoryProduct(quantity=5)
+inventory_copy["iphone"] ----/
+```
+
+So this would mutate the shared product object:
+
+```python
+inventory_copy["iphone"].quantity -= 2
+```
+
+That means the original inventory would change before commit, breaking all-or-nothing behavior.
+
+Current implementation avoids that by replacing the copied entry with a new product object:
+
+```python
+inventory_copy[item.product_name] = InventoryProduct(...)
+```
+
+## Project 04 Bottleneck 07: Quantity Invariant
+
+Line-level workflow checks prevent an order from subtracting too much stock, but they do not prevent invalid inventory records from existing in the first place.
+
+Bad object:
+
+```python
+InventoryProduct("iphone", -5, "IPHONE-15", "phone")
+```
+
+This should not exist.
+
+Invariant:
+
+```text
+InventoryProduct.quantity >= 0
+```
+
+An invariant is a rule that must always remain true for an object or system.
+
+Why `InventoryProduct` owns this check:
+
+```text
+negative quantity makes the inventory product itself invalid
+```
+
+The rule is not only about `place_order(...)`; it also matters for future workflows such as stock imports, admin edits, warehouse syncs, and repository loading.
+
+Implemented with:
+
+```text
+InventoryProduct.__post_init__
+```
+
+Concept:
+
+```text
+Invariant Protection
+```
+
+Current test result:
+
+```text
+7 passed
+```
+
+Next pressure:
+
+```text
+UserOrder.quantity can still be zero or negative.
+Should an ordered item protect its own quantity rule too?
+```

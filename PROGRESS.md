@@ -737,3 +737,69 @@ Resume point:
 - Continue from the `InventoryService` boundary.
 - Next likely pressure: `InventoryService.reduce_stock_for_order(...)` returns `OrderRecord`, which may mean inventory logic is now leaking order-result language.
 - Ask whether inventory should return order-level results or inventory-level results/status.
+
+## 2026-08-24
+
+Continued Phase 2, Project 04: Inventory and Order Management.
+
+Resolved boundary leak:
+
+- `InventoryService.reduce_stock_for_order(...)` no longer returns `OrderRecord`.
+- Introduced `InventoryResult` as an inventory-level result contract:
+  - `success`
+  - `message`
+- `InventoryService` now speaks inventory language:
+  - `"Stock reduced"`
+  - `"Product not found"`
+  - `"Only N units available"`
+- `place_order(...)` translates inventory result into order result:
+  - inventory failure -> `OrderRecord(False, message, None)`
+  - inventory success -> `OrderRecord(True, "Order placed", "order-1")`
+
+Introduced richer inventory record:
+
+- Added `InventoryProduct` dataclass:
+  - `product_name`
+  - `quantity`
+  - `sku`
+  - `category`
+- Changed inventory storage from `dict[str, int]` to `dict[str, InventoryProduct]`.
+- `place_order(...)` did not need to know about this storage change because it still only depends on `InventoryService`.
+- Discussed SKU:
+  - SKU means Stock Keeping Unit
+  - it is a stable business/internal identifier for tracking a specific sellable item or variant
+
+Deepened copy semantics:
+
+- `dict.copy()` is shallow:
+  - it creates a new dict container
+  - nested/mutable objects inside are still shared
+- Because inventory values are now `InventoryProduct` objects, directly mutating `inventory_copy[item].quantity` would also mutate the original product object.
+- Current implementation replaces the copied dict entry with a new `InventoryProduct` to preserve all-or-nothing behavior.
+
+Added invariant protection:
+
+- `InventoryProduct.quantity` must never be negative.
+- Added `InventoryProduct.__post_init__(...)` to raise `ValueError` when quantity is below zero.
+- Discussed why the object should own this rule:
+  - negative quantity makes the inventory product itself invalid
+  - the rule is not only about order placement
+  - putting the check inside `InventoryProduct` prevents invalid objects from existing anywhere
+
+Topics learned:
+
+- Boundary-specific result contracts
+- Storage representation hidden behind a service boundary
+- SKU as inventory/product identifier
+- Shallow copy vs shared nested objects
+- Invariant Protection
+- `dataclass.__post_init__`
+
+Current Project 04 test result:
+
+- Ran project 04 tests: 7 passed.
+
+Next pressure:
+
+- Quantity is protected for `InventoryProduct`, but `UserOrder.quantity` can still be `0` or negative.
+- Ask whether an ordered item with zero/negative quantity is meaningful, and where that rule should live.

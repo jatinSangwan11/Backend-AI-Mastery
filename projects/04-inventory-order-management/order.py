@@ -23,6 +23,10 @@ class InventoryProduct:
     sku: str
     category: str | None = None
 
+    def __post_init__(self) -> None:
+        if self.quantity < 0:
+            raise ValueError("Inventory quantity cannot be negative")
+
 class InventoryService:
     def __init__(self, inventory: dict[str, InventoryProduct]) -> None:
         self.inventory = inventory

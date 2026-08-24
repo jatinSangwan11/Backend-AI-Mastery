@@ -1,3 +1,5 @@
+import pytest
+
 from order import InventoryProduct, InventoryService, OrderRecord, UserOrder, place_order
 
 
@@ -106,3 +108,8 @@ def test_place_order_does_not_reduce_any_inventory_when_one_item_does_not_exist(
         "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
         "macbook": InventoryProduct("macbook", 3, "MACBOOK-PRO", "laptop"),
     }
+
+
+def test_inventory_product_quantity_cannot_be_negative():
+    with pytest.raises(ValueError, match="Inventory quantity cannot be negative"):
+        InventoryProduct("iphone", -1, "IPHONE-15", "phone")
