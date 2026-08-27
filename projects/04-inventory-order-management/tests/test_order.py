@@ -21,6 +21,32 @@ def test_place_order_returns_order_result_when_stock_is_available():
     assert inventory["iphone"].category == "phone"
 
 
+def test_get_order_returns_placed_order_by_order_id():
+    inventory = {
+        "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
+    }
+    inventory_service = InventoryService(inventory)
+    order_service = OrderService(inventory_service)
+
+    result = order_service.place_order([UserOrder("iphone", 3)])
+
+    assert order_service.get_order(result.order_id) == Order(
+        "order-1",
+        [UserOrder("iphone", 3)],
+        "PLACED",
+    )
+
+
+def test_get_order_returns_none_when_order_does_not_exist():
+    inventory = {
+        "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
+    }
+    inventory_service = InventoryService(inventory)
+    order_service = OrderService(inventory_service)
+
+    assert order_service.get_order("missing-order") is None
+
+
 def test_place_order_returns_failure_when_stock_is_not_available():
     inventory = {
         "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),

@@ -87,3 +87,10 @@ class OrderService:
         self.orders.append(order)
 
         return OrderRecord(True, "Order placed", order_id)
+
+    def get_order(self, order_id: str) -> Order | None:
+        for order in self.orders:
+            if order.order_id == order_id:
+                return order
+
+        return None
