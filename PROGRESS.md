@@ -833,3 +833,54 @@ Next pressure:
 
 - `OrderService` returns `order_id="order-1"`, but no real `Order` object is created or stored yet.
 - Move from caller-facing `OrderRecord` to an internal `Order` domain object with `order_id`, `items`, and `status`.
+
+## 2026-08-27
+
+Resumed Phase 2, Project 04 after a short break.
+
+Clarified the current pressure:
+
+- `OrderService.place_order(...)` returned `OrderRecord(True, "Order placed", "order-1")`.
+- That meant the caller received an `order_id`, but the system had no internal order state behind that id.
+- The problem was not the caller-facing response; the problem was missing business/domain state.
+
+Important distinction:
+
+- `OrderRecord` is the caller-facing operation result:
+  - did the operation succeed?
+  - what message should the caller receive?
+  - what order id should the caller use?
+- `Order` is the internal domain object:
+  - what order was created?
+  - what items were ordered?
+  - what is the order status?
+
+Implemented the first `Order` domain object:
+
+- Added `Order` dataclass:
+  - `order_id`
+  - `items`
+  - `status`
+- `OrderService.place_order(...)` now:
+  - asks `InventoryService` to reduce stock
+  - creates an `Order` only after inventory succeeds
+  - stores successful orders in `self.orders`
+  - returns `OrderRecord` to the caller
+- Current order creation rule:
+  - inventory failure -> no order is created
+  - inventory success -> create `Order(..., status="PLACED")`
+
+Current behavior:
+
+- `OrderRecord` remains the external/caller-facing response.
+- `Order` is now the internal business record.
+- `order_id` is no longer just a free-floating string; it is tied to an internal `Order` object.
+
+Current Project 04 test result:
+
+- Ran project 04 tests: 8 passed.
+
+Next pressure:
+
+- `OrderService` stores orders in `self.orders`, but this is still just an internal list.
+- We need a way to retrieve an order by `order_id`, which will naturally lead toward storage responsibility and eventually Repository.

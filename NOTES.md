@@ -2988,3 +2988,108 @@ Next pressure:
 ```text
 OrderService returns order_id="order-1", but no real Order object exists yet.
 ```
+
+## Project 04 Bottleneck 10: Order Id Without An Order
+
+`OrderService.place_order(...)` returned:
+
+```python
+OrderRecord(True, "Order placed", "order-1")
+```
+
+But no actual order existed inside the system.
+
+That created a mismatch:
+
+```text
+caller receives an order_id
+but backend has no Order object tied to that id
+```
+
+Why this matters:
+
+After order placement, later workflows need the order id as a handle:
+
+```text
+view order details
+cancel order
+track order
+retry payment
+support lookup
+refund later
+```
+
+If no internal order exists, the id is meaningless.
+
+Important distinction:
+
+```text
+OrderRecord = caller-facing operation result / receipt
+Order = internal domain object / business record
+```
+
+`OrderRecord` answers:
+
+```text
+Did the operation succeed?
+What message should the caller see?
+What order id should the caller receive?
+```
+
+`Order` answers:
+
+```text
+What was ordered?
+What is the order id?
+What is the current status?
+```
+
+Introduced:
+
+```text
+Order(order_id, items, status)
+```
+
+Current creation rule:
+
+```text
+inventory failure -> do not create Order
+inventory success -> create Order with status PLACED
+```
+
+Current collaboration:
+
+```text
+OrderService.place_order(order_list)
+  -> InventoryService.reduce_stock_for_order(order_list)
+  -> if failure, return OrderRecord failure
+  -> if success, create Order
+  -> store Order in self.orders
+  -> return OrderRecord success
+```
+
+Important correction:
+
+```text
+Order should not be created from OrderRecord.
+```
+
+`Order` should be created from business facts:
+
+```text
+order_id
+items
+status
+```
+
+Current test result:
+
+```text
+8 passed
+```
+
+Next pressure:
+
+```text
+Orders are stored in an internal list, but there is no retrieval by order_id yet.
+```

@@ -1,6 +1,6 @@
 import pytest
 
-from order import InventoryProduct, InventoryService, OrderRecord, OrderService, UserOrder
+from order import InventoryProduct, InventoryService, Order, OrderRecord, OrderService, UserOrder
 
 
 def test_place_order_returns_order_result_when_stock_is_available():
@@ -13,6 +13,9 @@ def test_place_order_returns_order_result_when_stock_is_available():
     result = order_service.place_order([UserOrder("iphone", 3)])
 
     assert result == OrderRecord(True, "Order placed", "order-1")
+    assert order_service.orders == [
+        Order("order-1", [UserOrder("iphone", 3)], "PLACED"),
+    ]
     assert inventory["iphone"].quantity == 2
     assert inventory["iphone"].sku == "IPHONE-15"
     assert inventory["iphone"].category == "phone"

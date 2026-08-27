@@ -64,10 +64,17 @@ class InventoryService:
 
         return InventoryResult(True, "Stock reduced")
 
+@dataclass
+class Order:
+    order_id: str
+    items: list[UserOrder]
+    status: str
+
 
 class OrderService:
     def __init__(self, inventory_service: InventoryService) -> None:
         self.inventory_service = inventory_service
+        self.orders: list[Order] = []
 
     def place_order(self, order_list: list[UserOrder]) -> OrderRecord:
         inventory_result = self.inventory_service.reduce_stock_for_order(order_list)
@@ -75,4 +82,8 @@ class OrderService:
         if not inventory_result.success:
             return OrderRecord(False, inventory_result.message, None)
 
-        return OrderRecord(True, "Order placed", "order-1")
+        order_id = f"order-{len(self.orders) + 1}"
+        order = Order(order_id, order_list, "PLACED")
+        self.orders.append(order)
+
+        return OrderRecord(True, "Order placed", order_id)
