@@ -3093,3 +3093,270 @@ Next pressure:
 ```text
 Orders are stored in an internal list, but there is no retrieval by order_id yet.
 ```
+
+## Project 04 Bottleneck 11: Order Storage Responsibility
+
+After `Order` existed, `OrderService` still directly owned:
+
+```text
+order list
+order id generation
+saving orders
+finding orders by id
+```
+
+That gave `OrderService` multiple reasons to change:
+
+```text
+workflow rules change
+storage representation changes
+lookup mechanics change
+id generation changes
+```
+
+Introduced:
+
+```text
+OrderStorage
+```
+
+Current split:
+
+```text
+OrderService:
+  owns order workflow/orchestration
+
+OrderStorage:
+  owns order storage mechanics
+  generates next order id
+  saves order
+  gets order by id
+```
+
+Concept:
+
+```text
+Single Responsibility Principle
+```
+
+Meaning:
+
+```text
+A class should have one main responsibility, or one main reason to change.
+```
+
+## Project 04 Bottleneck 12: Order Retrieval
+
+The caller received:
+
+```text
+order_id
+```
+
+but should not inspect:
+
+```python
+order_storage.orders
+```
+
+directly.
+
+Added:
+
+```text
+OrderService.get_order(order_id)
+```
+
+This lets callers ask for behavior instead of knowing the internal storage structure.
+
+Tests cover:
+
+```text
+known order id -> Order
+unknown order id -> None
+```
+
+## Project 04 Bottleneck 13: Cancellation Lifecycle
+
+Next lifecycle requirement:
+
+```text
+A placed order can be cancelled.
+```
+
+Added:
+
+```text
+OrderStatus.CANCELLED
+OrderService.cancel_order(order_id)
+```
+
+Current cancellation behavior:
+
+```text
+missing order -> failure
+placed order -> status becomes CANCELLED
+already cancelled order -> failure
+```
+
+Concept:
+
+```text
+State transition
+```
+
+Current valid transition:
+
+```text
+PLACED -> CANCELLED
+```
+
+Invalid/no-op transition:
+
+```text
+CANCELLED -> CANCELLED
+```
+
+## Project 04 Bottleneck 14: Cancellation Has Inventory Side Effect
+
+Cancelling an order only changed status at first.
+
+But after placement:
+
+```text
+inventory 5 -> place order for 3 -> inventory 2
+```
+
+cancellation should restore stock:
+
+```text
+cancel order -> inventory 5
+```
+
+Added:
+
+```text
+InventoryService.restore_stock_for_order(order.items)
+```
+
+Current cancellation sequence:
+
+```text
+find order
+reject missing/already-cancelled order
+restore inventory
+if restore succeeds, mark order CANCELLED
+return OrderRecord
+```
+
+Concept:
+
+```text
+State transition with side effects
+```
+
+Important deeper pressure:
+
+```text
+cancellation now changes inventory and order status
+```
+
+If one succeeds and the other fails, the system can become inconsistent.
+
+This reveals:
+
+```text
+atomicity / transaction boundary
+```
+
+Atomicity means:
+
+```text
+either all related changes happen, or none happen
+```
+
+## Project 04 Bottleneck 15: Inventory Storage Responsibility
+
+After splitting order storage, inventory had a similar smell.
+
+`InventoryService` owned:
+
+```text
+inventory behavior
+raw inventory dict
+dict lookup
+dict updates
+commit mechanics
+```
+
+Introduced:
+
+```text
+InventoryStorage
+```
+
+First split:
+
+```text
+InventoryStorage owns raw dict, copy, replace
+```
+
+Then Jatin noticed a subtle leak:
+
+```text
+InventoryService still indexed the dict directly
+```
+
+Refined split:
+
+```text
+InventoryService:
+  loops over requested order items
+  owns stock business behavior
+  asks storage to get/save/commit products
+
+InventoryStorage:
+  owns how inventory products are stored and found
+  begins a change set
+  gets product by name from that change set
+  saves product into that change set
+  commits change set
+```
+
+Introduced:
+
+```text
+InventoryChangeSet
+```
+
+Intuition:
+
+```text
+temporary pending inventory changes before commit
+```
+
+Earlier:
+
+```python
+inventory_copy = inventory.copy()
+```
+
+Now:
+
+```text
+change_set = InventoryChangeSet(inventory.copy())
+```
+
+This makes the temporary all-or-nothing update boundary explicit.
+
+Current test result:
+
+```text
+13 passed
+```
+
+Resume point:
+
+```text
+Formalize repository-shaped storage boundaries, then deepen transaction/atomicity.
+```

@@ -884,3 +884,91 @@ Next pressure:
 
 - `OrderService` stores orders in `self.orders`, but this is still just an internal list.
 - We need a way to retrieve an order by `order_id`, which will naturally lead toward storage responsibility and eventually Repository.
+
+## 2026-08-28
+
+Continued Phase 2, Project 04.
+
+Order status modeling:
+
+- Introduced `OrderStatus` enum for fixed order lifecycle states.
+- Current states:
+  - `PLACED`
+  - `CANCELLED`
+- Clarified:
+  - `OrderRecord.success` is operation outcome.
+  - `Order.status` is lifecycle state of an actual order.
+  - `PLACED` means the order was accepted/created by the system, not delivered/completed.
+
+Order storage split:
+
+- Introduced `OrderStorage`.
+- Moved order storage mechanics out of `OrderService`:
+  - generate next order id
+  - save order
+  - get order by id
+- `OrderService` now owns workflow/orchestration and delegates storage mechanics to `OrderStorage`.
+- This made Single Responsibility Principle explicit:
+  - `OrderService` changes when order workflow changes.
+  - `OrderStorage` changes when order storage mechanics change.
+
+Order retrieval:
+
+- Added `OrderService.get_order(order_id)`.
+- Tests now cover:
+  - retrieving a placed order by id
+  - returning `None` for a missing order
+- This avoids callers reaching into raw `order_storage.orders` for normal usage.
+
+Cancellation lifecycle:
+
+- Added `OrderService.cancel_order(order_id)`.
+- Behavior:
+  - missing order -> `OrderRecord(False, "Order not found", None)`
+  - placed order -> status changes to `CANCELLED`
+  - already cancelled order -> `OrderRecord(False, "Order already cancelled", order_id)`
+- Then added inventory restoration on cancellation:
+  - placing an order reduces inventory
+  - cancelling the placed order restores inventory
+- Discussed sequencing:
+  - restore inventory first
+  - if restoration succeeds, mark order as `CANCELLED`
+  - this reveals the deeper atomicity/transaction problem for later
+
+Inventory storage split:
+
+- Introduced `InventoryStorage`.
+- Moved raw inventory dict ownership out of `InventoryService`.
+- First split moved copy/replace mechanics into storage.
+- Refined split after noticing `InventoryService` still indexed the dict directly.
+- Added `InventoryChangeSet` as an explicit temporary inventory-change boundary.
+- Current inventory collaboration:
+  - `InventoryService` loops over requested order items and owns stock business behavior.
+  - `InventoryStorage` owns how products are fetched/saved/committed in the storage shape.
+  - `InventoryChangeSet` holds pending inventory changes before commit.
+
+Topics learned:
+
+- Enum for fixed domain states
+- Operation outcome vs domain lifecycle state
+- Order lifecycle state transition
+- State transition with side effects
+- Single Responsibility Principle
+- Storage responsibility boundary
+- Repository-pattern intuition
+- Inventory change set / pending changes before commit
+- Early Unit of Work / transaction-boundary intuition
+- Atomicity: multi-state changes should eventually succeed or fail together
+
+Current Project 04 test result:
+
+- Ran project 04 tests: 13 passed.
+
+Resume point:
+
+- Continue when Jatin says start.
+- Next topic: formalize the repository-shaped boundary and then deepen the transaction/atomicity problem.
+- Current important pressure:
+  - order placement changes inventory and saves an order
+  - order cancellation restores inventory and changes order status
+  - these are multi-state workflows that should eventually be atomic

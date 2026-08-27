@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from enum import Enum
 
 
 @dataclass
@@ -36,57 +37,104 @@ class InventoryProduct:
             raise ValueError("Inventory quantity cannot be negative")
 
 
-class InventoryService:
+class OrderStatus(Enum):
+    PLACED = "PLACED"
+    CANCELLED = "CANCELLED"
+
+
+@dataclass
+class InventoryChangeSet:
+    products: dict[str, InventoryProduct]
+
+
+class InventoryStorage:
     def __init__(self, inventory: dict[str, InventoryProduct]) -> None:
         self.inventory = inventory
 
+    def begin_change_set(self) -> InventoryChangeSet:
+        return InventoryChangeSet(self.inventory.copy())
+
+    def get_product(self, change_set: InventoryChangeSet, product_name: str) -> InventoryProduct | None:
+        return change_set.products.get(product_name)
+
+    def save_product(self, change_set: InventoryChangeSet, product: InventoryProduct) -> None:
+        change_set.products[product.product_name] = product
+
+    def commit(self, change_set: InventoryChangeSet) -> None:
+        self.inventory.clear()
+        self.inventory.update(change_set.products)
+
+
+class InventoryService:
+    def __init__(self, inventory_storage: InventoryStorage) -> None:
+        self.inventory_storage = inventory_storage
+
     def reduce_stock_for_order(self, order_list: list[UserOrder]) -> InventoryResult:
-        inventory_copy = self.inventory.copy()
+        change_set = self.inventory_storage.begin_change_set()
 
         for item in order_list:
-            if item.product_name not in inventory_copy:
-                return InventoryResult(False, "Product not found")
+            inventory_product = self.inventory_storage.get_product(change_set, item.product_name)
 
-            inventory_product = inventory_copy[item.product_name]
+            if inventory_product is None:
+                return InventoryResult(False, "Product not found")
 
             if inventory_product.quantity < item.quantity:
                 return InventoryResult(False, f"Only {inventory_product.quantity} units available")
 
-            inventory_copy[item.product_name] = InventoryProduct(
-                product_name=inventory_product.product_name,
-                quantity=inventory_product.quantity - item.quantity,
-                sku=inventory_product.sku,
-                category=inventory_product.category,
+            self.inventory_storage.save_product(
+                change_set,
+                InventoryProduct(
+                    product_name=inventory_product.product_name,
+                    quantity=inventory_product.quantity - item.quantity,
+                    sku=inventory_product.sku,
+                    category=inventory_product.category,
+                ),
             )
 
-        self.inventory.clear()
-        self.inventory.update(inventory_copy)
+        self.inventory_storage.commit(change_set)
 
         return InventoryResult(True, "Stock reduced")
+
+    def restore_stock_for_order(self, order_list: list[UserOrder]) -> InventoryResult:
+        change_set = self.inventory_storage.begin_change_set()
+
+        for item in order_list:
+            inventory_product = self.inventory_storage.get_product(change_set, item.product_name)
+
+            if inventory_product is None:
+                return InventoryResult(False, "Product not found")
+
+            self.inventory_storage.save_product(
+                change_set,
+                InventoryProduct(
+                    product_name=inventory_product.product_name,
+                    quantity=inventory_product.quantity + item.quantity,
+                    sku=inventory_product.sku,
+                    category=inventory_product.category,
+                ),
+            )
+
+        self.inventory_storage.commit(change_set)
+
+        return InventoryResult(True, "Stock restored")
+
 
 @dataclass
 class Order:
     order_id: str
     items: list[UserOrder]
-    status: str
+    status: OrderStatus
 
 
-class OrderService:
-    def __init__(self, inventory_service: InventoryService) -> None:
-        self.inventory_service = inventory_service
+class OrderStorage:
+    def __init__(self) -> None:
         self.orders: list[Order] = []
 
-    def place_order(self, order_list: list[UserOrder]) -> OrderRecord:
-        inventory_result = self.inventory_service.reduce_stock_for_order(order_list)
+    def next_order_id(self) -> str:
+        return f"order-{len(self.orders) + 1}"
 
-        if not inventory_result.success:
-            return OrderRecord(False, inventory_result.message, None)
-
-        order_id = f"order-{len(self.orders) + 1}"
-        order = Order(order_id, order_list, "PLACED")
+    def save(self, order: Order) -> None:
         self.orders.append(order)
-
-        return OrderRecord(True, "Order placed", order_id)
 
     def get_order(self, order_id: str) -> Order | None:
         for order in self.orders:
@@ -94,3 +142,42 @@ class OrderService:
                 return order
 
         return None
+
+
+class OrderService:
+
+    def __init__(self, inventory_service: InventoryService, order_store: OrderStorage) -> None:
+        self.inventory_service = inventory_service
+        self.order_store = order_store
+
+    def place_order(self, order_list: list[UserOrder]) -> OrderRecord:
+        inventory_result = self.inventory_service.reduce_stock_for_order(order_list)
+
+        if not inventory_result.success:
+            return OrderRecord(False, inventory_result.message, None)
+
+        order_id = self.order_store.next_order_id()
+        order = Order(order_id, order_list, OrderStatus.PLACED)
+        self.order_store.save(order)
+
+        return OrderRecord(True, "Order placed", order_id)
+
+    def get_order(self, order_id: str) -> Order | None:
+        return self.order_store.get_order(order_id)
+
+    def cancel_order(self, order_id: str) -> OrderRecord:
+        order = self.get_order(order_id)
+
+        if order is None:
+            return OrderRecord(False, "Order not found", None)
+
+        if order.status == OrderStatus.CANCELLED:
+            return OrderRecord(False, "Order already cancelled", order_id)
+
+        inventory_result = self.inventory_service.restore_stock_for_order(order.items)
+
+        if not inventory_result.success:
+            return OrderRecord(False, inventory_result.message, order_id)
+
+        order.status = OrderStatus.CANCELLED
+        return OrderRecord(True, "Order cancelled", order_id)
