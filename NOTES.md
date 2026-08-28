@@ -3117,7 +3117,7 @@ id generation changes
 Introduced:
 
 ```text
-OrderStorage
+OrderRepository
 ```
 
 Current split:
@@ -3126,7 +3126,7 @@ Current split:
 OrderService:
   owns order workflow/orchestration
 
-OrderStorage:
+OrderRepository:
   owns order storage mechanics
   generates next order id
   saves order
@@ -3156,7 +3156,7 @@ order_id
 but should not inspect:
 
 ```python
-order_storage.orders
+order_repository.orders
 ```
 
 directly.
@@ -3292,13 +3292,13 @@ commit mechanics
 Introduced:
 
 ```text
-InventoryStorage
+InventoryRepository
 ```
 
 First split:
 
 ```text
-InventoryStorage owns raw dict, copy, replace
+InventoryRepository owns raw dict, copy, replace
 ```
 
 Then Jatin noticed a subtle leak:
@@ -3315,7 +3315,7 @@ InventoryService:
   owns stock business behavior
   asks storage to get/save/commit products
 
-InventoryStorage:
+InventoryRepository:
   owns how inventory products are stored and found
   begins a change set
   gets product by name from that change set
@@ -3360,3 +3360,170 @@ Resume point:
 ```text
 Formalize repository-shaped storage boundaries, then deepen transaction/atomicity.
 ```
+
+## Project 04 Concept: Repository Pattern
+
+`OrderRepository` and `InventoryRepository` are currently in-memory repository objects.
+
+They sit between business logic and stored data.
+
+Repository answers this responsibility question:
+
+```text
+Who should know how domain objects are saved and fetched?
+```
+
+Answer:
+
+```text
+Repository.
+```
+
+In the current pure-Python project:
+
+```text
+OrderRepository stores orders in an in-memory list.
+InventoryRepository stores inventory products in an in-memory dict.
+```
+
+That is fine for now because the project is still in the pure-Python design phase.
+
+In production, the storage mechanism may become:
+
+```text
+Postgres
+Redis
+files
+external services
+```
+
+At that point, the repository acts as a layer between:
+
+```text
+business layer / services
+```
+
+and:
+
+```text
+database or persistence calls
+```
+
+Why this matters:
+
+```text
+OrderService should not know whether orders are stored in a list, dict, Postgres table, Redis key, or external service.
+```
+
+Instead, business code should depend on repository behavior:
+
+```text
+save order
+get order by id
+save inventory product
+get inventory product
+commit inventory changes
+```
+
+This keeps responsibilities separate:
+
+```text
+Service = business workflow
+Repository = persistence/storage access
+Domain object = business state and invariants
+```
+
+This also reduces coupling:
+
+```text
+Changing database/storage mechanics should mostly change the repository, not the business workflow.
+```
+
+Current vocabulary:
+
+```text
+OrderRepository -> in-memory order repository
+InventoryRepository -> in-memory inventory repository
+```
+
+Current code now uses repository names because the design role is clear.
+
+Practical LLD takeaway:
+
+```text
+When business logic needs to save/fetch domain objects, add a repository boundary instead of coupling services directly to DB/list/dict mechanics.
+```
+
+In production:
+
+```text
+Service -> Repository -> DB/Redis/file/external service
+```
+
+This keeps the business layer from knowing persistence details.
+
+## Project 04 Bottleneck 16: Save Failure After Inventory Change
+
+After repository boundaries were introduced, a deeper workflow pressure became visible.
+
+Current placement flow:
+
+```text
+OrderService.place_order(order_list)
+  -> InventoryService.reduce_stock_for_order(order_list)
+  -> OrderRepository.next_order_id()
+  -> OrderRepository.save(order)
+```
+
+The dangerous failure case:
+
+```text
+inventory reduction succeeds
+order save fails
+```
+
+Bad final state:
+
+```text
+stock is reduced
+but no saved order exists
+```
+
+This is not an inventory validation failure. Inventory did its job correctly. The problem is that `place_order(...)` is a multi-step workflow touching more than one piece of state.
+
+Starter-level recovery:
+
+```text
+reduce stock
+if stock reduction fails, return failure
+
+try to create and save the order
+if order save fails:
+  restore the stock that was reduced
+  return order-placement failure
+```
+
+This recovery belongs in `OrderService.place_order(...)` because `OrderService` owns the placement workflow. `InventoryService` should not know that order saving failed; it should only provide the behavior needed to reduce or restore stock.
+
+Concept name:
+
+```text
+manual rollback / compensating action
+```
+
+Mental model:
+
+```text
+If step B fails after step A already changed state,
+undo step A before returning failure.
+```
+
+In this project:
+
+```text
+step A = reduce inventory
+step B = save order
+undo A = restore inventory
+```
+
+This is still not a full database transaction or full Unit of Work. It is the pure-Python intuition behind why transaction boundaries matter.

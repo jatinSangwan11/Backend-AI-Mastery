@@ -47,7 +47,7 @@ class InventoryChangeSet:
     products: dict[str, InventoryProduct]
 
 
-class InventoryStorage:
+class InventoryRepository:
     def __init__(self, inventory: dict[str, InventoryProduct]) -> None:
         self.inventory = inventory
 
@@ -66,14 +66,14 @@ class InventoryStorage:
 
 
 class InventoryService:
-    def __init__(self, inventory_storage: InventoryStorage) -> None:
-        self.inventory_storage = inventory_storage
+    def __init__(self, inventory_repository: InventoryRepository) -> None:
+        self.inventory_repository = inventory_repository
 
     def reduce_stock_for_order(self, order_list: list[UserOrder]) -> InventoryResult:
-        change_set = self.inventory_storage.begin_change_set()
+        change_set = self.inventory_repository.begin_change_set()
 
         for item in order_list:
-            inventory_product = self.inventory_storage.get_product(change_set, item.product_name)
+            inventory_product = self.inventory_repository.get_product(change_set, item.product_name)
 
             if inventory_product is None:
                 return InventoryResult(False, "Product not found")
@@ -81,7 +81,7 @@ class InventoryService:
             if inventory_product.quantity < item.quantity:
                 return InventoryResult(False, f"Only {inventory_product.quantity} units available")
 
-            self.inventory_storage.save_product(
+            self.inventory_repository.save_product(
                 change_set,
                 InventoryProduct(
                     product_name=inventory_product.product_name,
@@ -91,20 +91,20 @@ class InventoryService:
                 ),
             )
 
-        self.inventory_storage.commit(change_set)
+        self.inventory_repository.commit(change_set)
 
         return InventoryResult(True, "Stock reduced")
 
     def restore_stock_for_order(self, order_list: list[UserOrder]) -> InventoryResult:
-        change_set = self.inventory_storage.begin_change_set()
+        change_set = self.inventory_repository.begin_change_set()
 
         for item in order_list:
-            inventory_product = self.inventory_storage.get_product(change_set, item.product_name)
+            inventory_product = self.inventory_repository.get_product(change_set, item.product_name)
 
             if inventory_product is None:
                 return InventoryResult(False, "Product not found")
 
-            self.inventory_storage.save_product(
+            self.inventory_repository.save_product(
                 change_set,
                 InventoryProduct(
                     product_name=inventory_product.product_name,
@@ -114,7 +114,7 @@ class InventoryService:
                 ),
             )
 
-        self.inventory_storage.commit(change_set)
+        self.inventory_repository.commit(change_set)
 
         return InventoryResult(True, "Stock restored")
 
@@ -126,7 +126,7 @@ class Order:
     status: OrderStatus
 
 
-class OrderStorage:
+class OrderRepository:
     def __init__(self) -> None:
         self.orders: list[Order] = []
 
@@ -146,9 +146,9 @@ class OrderStorage:
 
 class OrderService:
 
-    def __init__(self, inventory_service: InventoryService, order_store: OrderStorage) -> None:
+    def __init__(self, inventory_service: InventoryService, order_repository: OrderRepository) -> None:
         self.inventory_service = inventory_service
-        self.order_store = order_store
+        self.order_repository = order_repository
 
     def place_order(self, order_list: list[UserOrder]) -> OrderRecord:
         inventory_result = self.inventory_service.reduce_stock_for_order(order_list)
@@ -156,14 +156,18 @@ class OrderService:
         if not inventory_result.success:
             return OrderRecord(False, inventory_result.message, None)
 
-        order_id = self.order_store.next_order_id()
-        order = Order(order_id, order_list, OrderStatus.PLACED)
-        self.order_store.save(order)
+        try:
+            order_id = self.order_repository.next_order_id()
+            order = Order(order_id, order_list, OrderStatus.PLACED)
+            self.order_repository.save(order)
+        except Exception:
+            self.inventory_service.restore_stock_for_order(order_list)
+            return OrderRecord(False, "Order placement failed", None)
 
         return OrderRecord(True, "Order placed", order_id)
 
     def get_order(self, order_id: str) -> Order | None:
-        return self.order_store.get_order(order_id)
+        return self.order_repository.get_order(order_id)
 
     def cancel_order(self, order_id: str) -> OrderRecord:
         order = self.get_order(order_id)

@@ -1,21 +1,21 @@
 import pytest
 
-from order import InventoryProduct, InventoryService, InventoryStorage, Order, OrderRecord, OrderService, OrderStatus, OrderStorage, UserOrder
+from order import InventoryProduct, InventoryService, InventoryRepository, Order, OrderRecord, OrderService, OrderStatus, OrderRepository, UserOrder
 
 
 def test_place_order_returns_order_result_when_stock_is_available():
     inventory = {
         "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
     }
-    inventory_storage = InventoryStorage(inventory)
-    inventory_service = InventoryService(inventory_storage)
-    order_storage = OrderStorage()
-    order_service = OrderService(inventory_service, order_storage)
+    inventory_repository = InventoryRepository(inventory)
+    inventory_service = InventoryService(inventory_repository)
+    order_repository = OrderRepository()
+    order_service = OrderService(inventory_service, order_repository)
 
     result = order_service.place_order([UserOrder("iphone", 3)])
 
     assert result == OrderRecord(True, "Order placed", "order-1")
-    assert order_storage.orders == [
+    assert order_repository.orders == [
         Order("order-1", [UserOrder("iphone", 3)], OrderStatus.PLACED),
     ]
     assert inventory["iphone"].quantity == 2
@@ -27,10 +27,10 @@ def test_get_order_returns_placed_order_by_order_id():
     inventory = {
         "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
     }
-    inventory_storage = InventoryStorage(inventory)
-    inventory_service = InventoryService(inventory_storage)
-    order_storage = OrderStorage()
-    order_service = OrderService(inventory_service, order_storage)
+    inventory_repository = InventoryRepository(inventory)
+    inventory_service = InventoryService(inventory_repository)
+    order_repository = OrderRepository()
+    order_service = OrderService(inventory_service, order_repository)
 
     result = order_service.place_order([UserOrder("iphone", 3)])
 
@@ -45,10 +45,10 @@ def test_get_order_returns_none_when_order_does_not_exist():
     inventory = {
         "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
     }
-    inventory_storage = InventoryStorage(inventory)
-    inventory_service = InventoryService(inventory_storage)
-    order_storage = OrderStorage()
-    order_service = OrderService(inventory_service, order_storage)
+    inventory_repository = InventoryRepository(inventory)
+    inventory_service = InventoryService(inventory_repository)
+    order_repository = OrderRepository()
+    order_service = OrderService(inventory_service, order_repository)
 
     assert order_service.get_order("missing-order") is None
 
@@ -57,10 +57,10 @@ def test_cancel_order_changes_placed_order_status_to_cancelled():
     inventory = {
         "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
     }
-    inventory_storage = InventoryStorage(inventory)
-    inventory_service = InventoryService(inventory_storage)
-    order_storage = OrderStorage()
-    order_service = OrderService(inventory_service, order_storage)
+    inventory_repository = InventoryRepository(inventory)
+    inventory_service = InventoryService(inventory_repository)
+    order_repository = OrderRepository()
+    order_service = OrderService(inventory_service, order_repository)
 
     result = order_service.place_order([UserOrder("iphone", 3)])
     cancel_result = order_service.cancel_order(result.order_id)
@@ -78,10 +78,10 @@ def test_cancel_order_returns_failure_when_order_does_not_exist():
     inventory = {
         "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
     }
-    inventory_storage = InventoryStorage(inventory)
-    inventory_service = InventoryService(inventory_storage)
-    order_storage = OrderStorage()
-    order_service = OrderService(inventory_service, order_storage)
+    inventory_repository = InventoryRepository(inventory)
+    inventory_service = InventoryService(inventory_repository)
+    order_repository = OrderRepository()
+    order_service = OrderService(inventory_service, order_repository)
 
     assert order_service.cancel_order("missing-order") == OrderRecord(
         False,
@@ -94,10 +94,10 @@ def test_cancel_order_returns_failure_when_order_is_already_cancelled():
     inventory = {
         "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
     }
-    inventory_storage = InventoryStorage(inventory)
-    inventory_service = InventoryService(inventory_storage)
-    order_storage = OrderStorage()
-    order_service = OrderService(inventory_service, order_storage)
+    inventory_repository = InventoryRepository(inventory)
+    inventory_service = InventoryService(inventory_repository)
+    order_repository = OrderRepository()
+    order_service = OrderService(inventory_service, order_repository)
 
     result = order_service.place_order([UserOrder("iphone", 3)])
     order_service.cancel_order(result.order_id)
@@ -115,10 +115,10 @@ def test_place_order_returns_failure_when_stock_is_not_available():
     inventory = {
         "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
     }
-    inventory_storage = InventoryStorage(inventory)
-    inventory_service = InventoryService(inventory_storage)
-    order_storage = OrderStorage()
-    order_service = OrderService(inventory_service, order_storage)
+    inventory_repository = InventoryRepository(inventory)
+    inventory_service = InventoryService(inventory_repository)
+    order_repository = OrderRepository()
+    order_service = OrderService(inventory_service, order_repository)
 
     result = order_service.place_order([UserOrder("iphone", 7)])
 
@@ -130,10 +130,10 @@ def test_place_order_returns_failure_when_product_does_not_exist():
     inventory = {
         "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
     }
-    inventory_storage = InventoryStorage(inventory)
-    inventory_service = InventoryService(inventory_storage)
-    order_storage = OrderStorage()
-    order_service = OrderService(inventory_service, order_storage)
+    inventory_repository = InventoryRepository(inventory)
+    inventory_service = InventoryService(inventory_repository)
+    order_repository = OrderRepository()
+    order_service = OrderService(inventory_service, order_repository)
 
     result = order_service.place_order([UserOrder("airpods", 1)])
 
@@ -143,15 +143,37 @@ def test_place_order_returns_failure_when_product_does_not_exist():
     }
 
 
+def test_place_order_restores_inventory_when_order_save_fails():
+    class FailingOrderRepository(OrderRepository):
+        def save(self, order: Order) -> None:
+            raise RuntimeError("Database failed")
+
+    inventory = {
+        "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
+    }
+    inventory_repository = InventoryRepository(inventory)
+    inventory_service = InventoryService(inventory_repository)
+    order_repository = FailingOrderRepository()
+    order_service = OrderService(inventory_service, order_repository)
+
+    result = order_service.place_order([UserOrder("iphone", 3)])
+
+    assert result == OrderRecord(False, "Order placement failed", None)
+    assert inventory == {
+        "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
+    }
+    assert order_repository.orders == []
+
+
 def test_place_order_reduces_inventory_for_multiple_items_when_all_are_available():
     inventory = {
         "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
         "macbook": InventoryProduct("macbook", 3, "MACBOOK-PRO", "laptop"),
     }
-    inventory_storage = InventoryStorage(inventory)
-    inventory_service = InventoryService(inventory_storage)
-    order_storage = OrderStorage()
-    order_service = OrderService(inventory_service, order_storage)
+    inventory_repository = InventoryRepository(inventory)
+    inventory_service = InventoryService(inventory_repository)
+    order_repository = OrderRepository()
+    order_service = OrderService(inventory_service, order_repository)
 
     result = order_service.place_order(
         [
@@ -172,10 +194,10 @@ def test_place_order_does_not_reduce_any_inventory_when_one_item_is_unavailable(
         "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
         "macbook": InventoryProduct("macbook", 3, "MACBOOK-PRO", "laptop"),
     }
-    inventory_storage = InventoryStorage(inventory)
-    inventory_service = InventoryService(inventory_storage)
-    order_storage = OrderStorage()
-    order_service = OrderService(inventory_service, order_storage)
+    inventory_repository = InventoryRepository(inventory)
+    inventory_service = InventoryService(inventory_repository)
+    order_repository = OrderRepository()
+    order_service = OrderService(inventory_service, order_repository)
 
     result = order_service.place_order(
         [
@@ -196,10 +218,10 @@ def test_place_order_does_not_reduce_any_inventory_when_one_item_does_not_exist(
         "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
         "macbook": InventoryProduct("macbook", 3, "MACBOOK-PRO", "laptop"),
     }
-    inventory_storage = InventoryStorage(inventory)
-    inventory_service = InventoryService(inventory_storage)
-    order_storage = OrderStorage()
-    order_service = OrderService(inventory_service, order_storage)
+    inventory_repository = InventoryRepository(inventory)
+    inventory_service = InventoryService(inventory_repository)
+    order_repository = OrderRepository()
+    order_service = OrderService(inventory_service, order_repository)
 
     result = order_service.place_order(
         [

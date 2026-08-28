@@ -900,17 +900,17 @@ Order status modeling:
   - `Order.status` is lifecycle state of an actual order.
   - `PLACED` means the order was accepted/created by the system, not delivered/completed.
 
-Order storage split:
+Order repository split:
 
-- Introduced `OrderStorage`.
+- Introduced `OrderRepository`.
 - Moved order storage mechanics out of `OrderService`:
   - generate next order id
   - save order
   - get order by id
-- `OrderService` now owns workflow/orchestration and delegates storage mechanics to `OrderStorage`.
+- `OrderService` now owns workflow/orchestration and delegates storage mechanics to `OrderRepository`.
 - This made Single Responsibility Principle explicit:
   - `OrderService` changes when order workflow changes.
-  - `OrderStorage` changes when order storage mechanics change.
+  - `OrderRepository` changes when order persistence/storage mechanics change.
 
 Order retrieval:
 
@@ -935,16 +935,16 @@ Cancellation lifecycle:
   - if restoration succeeds, mark order as `CANCELLED`
   - this reveals the deeper atomicity/transaction problem for later
 
-Inventory storage split:
+Inventory repository split:
 
-- Introduced `InventoryStorage`.
+- Introduced `InventoryRepository`.
 - Moved raw inventory dict ownership out of `InventoryService`.
-- First split moved copy/replace mechanics into storage.
+- First split moved copy/replace mechanics into the repository.
 - Refined split after noticing `InventoryService` still indexed the dict directly.
 - Added `InventoryChangeSet` as an explicit temporary inventory-change boundary.
 - Current inventory collaboration:
   - `InventoryService` loops over requested order items and owns stock business behavior.
-  - `InventoryStorage` owns how products are fetched/saved/committed in the storage shape.
+  - `InventoryRepository` owns how products are fetched/saved/committed in the storage shape.
   - `InventoryChangeSet` holds pending inventory changes before commit.
 
 Topics learned:
@@ -954,8 +954,8 @@ Topics learned:
 - Order lifecycle state transition
 - State transition with side effects
 - Single Responsibility Principle
-- Storage responsibility boundary
-- Repository-pattern intuition
+- Repository pattern
+- Repository as boundary between business logic and persistence
 - Inventory change set / pending changes before commit
 - Early Unit of Work / transaction-boundary intuition
 - Atomicity: multi-state changes should eventually succeed or fail together
@@ -967,8 +967,51 @@ Current Project 04 test result:
 Resume point:
 
 - Continue when Jatin says start.
-- Next topic: formalize the repository-shaped boundary and then deepen the transaction/atomicity problem.
+- Next topic: deepen the transaction/atomicity problem now that repository boundaries are named.
 - Current important pressure:
   - order placement changes inventory and saves an order
   - order cancellation restores inventory and changes order status
   - these are multi-state workflows that should eventually be atomic
+
+Repository vocabulary update:
+
+- Renamed `OrderStorage` to `OrderRepository`.
+- Renamed `InventoryStorage` to `InventoryRepository`.
+- Reason:
+  - the objects are not just generic storage holders
+  - they act as the layer between business services and persistence mechanics
+  - in production, this layer would hide DB/Redis/file/external-service calls from the business workflow
+- Current mental model:
+  - services own business workflows
+  - repositories own save/fetch/commit mechanics
+  - domain objects own business state and invariants
+
+Save-failure rollback pressure:
+
+- Found the next transaction/atomicity pressure inside `OrderService.place_order(...)`.
+- Risky flow:
+  - inventory reduction succeeds
+  - order id/order creation/save happens next
+  - if order saving fails, inventory would stay reduced without a saved order
+- Added starter-level recovery:
+  - wrap order id creation, order creation, and repository save in `try/except`
+  - if that block fails, call `InventoryService.restore_stock_for_order(order_list)`
+  - return `OrderRecord(False, "Order placement failed", None)`
+- Added a regression test using a failing order repository to simulate save failure after stock reduction.
+- Verified that inventory is restored and no order is saved when the repository save fails.
+- Concept touched:
+  - manual rollback
+  - compensating action
+  - transaction-boundary intuition
+  - atomicity pressure across inventory and order state
+
+Current Project 04 test result:
+
+- Ran project 04 tests: 14 passed.
+
+Resume point:
+
+- Next pressure should continue from transaction/atomicity:
+  - current code manually restores inventory when order save fails
+  - this works at starter level
+  - but exception handling, rollback failure, and cleaner transaction boundaries are still open design pressure
