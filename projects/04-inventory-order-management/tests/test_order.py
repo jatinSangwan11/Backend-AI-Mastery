@@ -1,6 +1,17 @@
 import pytest
 
-from order import InventoryProduct, InventoryService, InventoryRepository, Order, OrderRecord, OrderService, OrderStatus, OrderRepository, UserOrder
+from order import (
+    InventoryProduct,
+    InventoryService,
+    InventoryRepository,
+    Order,
+    OrderRecord,
+    OrderRepositoryError,
+    OrderService,
+    OrderStatus,
+    OrderRepository,
+    UserOrder,
+)
 
 
 def test_place_order_returns_order_result_when_stock_is_available():
@@ -146,7 +157,7 @@ def test_place_order_returns_failure_when_product_does_not_exist():
 def test_place_order_restores_inventory_when_order_save_fails():
     class FailingOrderRepository(OrderRepository):
         def save(self, order: Order) -> None:
-            raise RuntimeError("Database failed")
+            raise OrderRepositoryError("Database failed")
 
     inventory = {
         "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
@@ -163,6 +174,23 @@ def test_place_order_restores_inventory_when_order_save_fails():
         "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
     }
     assert order_repository.orders == []
+
+
+def test_place_order_does_not_hide_unexpected_order_save_error():
+    class BrokenOrderRepository(OrderRepository):
+        def save(self, order: Order) -> None:
+            raise RuntimeError("Programming bug")
+
+    inventory = {
+        "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
+    }
+    inventory_repository = InventoryRepository(inventory)
+    inventory_service = InventoryService(inventory_repository)
+    order_repository = BrokenOrderRepository()
+    order_service = OrderService(inventory_service, order_repository)
+
+    with pytest.raises(RuntimeError, match="Programming bug"):
+        order_service.place_order([UserOrder("iphone", 3)])
 
 
 def test_place_order_reduces_inventory_for_multiple_items_when_all_are_available():

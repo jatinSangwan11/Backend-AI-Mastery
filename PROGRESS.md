@@ -1015,3 +1015,33 @@ Resume point:
   - current code manually restores inventory when order save fails
   - this works at starter level
   - but exception handling, rollback failure, and cleaner transaction boundaries are still open design pressure
+
+Specific exception handling refinement:
+
+- Refined the broad rollback handler in `OrderService.place_order(...)`.
+- Replaced `except Exception` with a specific custom exception:
+  - `OrderRepositoryError`
+- Current behavior:
+  - business failures such as product missing or insufficient stock return normal failure results
+  - known order repository failure after inventory reduction triggers inventory restore and returns order-placement failure
+  - unexpected bugs are allowed to surface instead of being hidden as a fake `OrderRecord`
+- Clarified "allowed to surface":
+  - the function does not catch that error
+  - the error travels upward to the caller/test/framework/logging boundary
+  - in pytest, `pytest.raises(...)` can observe it
+  - in a real backend, the framework would usually log it and return a safe `500`
+- Added a test proving unexpected `RuntimeError` is not swallowed.
+
+Current Project 04 test result:
+
+- Ran project 04 tests: 15 passed.
+
+Wrap-up checkpoint:
+
+- Today ended on custom exceptions and specific exception handling.
+- Remaining before DB design is roughly 4-5 focused topics:
+  - rollback failure pressure
+  - cleaner transaction boundary / Unit of Work intuition
+  - service interfaces / dependency inversion basics
+  - idempotency basics
+  - possible module split once file pressure appears

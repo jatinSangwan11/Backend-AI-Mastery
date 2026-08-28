@@ -126,6 +126,10 @@ class Order:
     status: OrderStatus
 
 
+class OrderRepositoryError(Exception):
+    pass
+
+
 class OrderRepository:
     def __init__(self) -> None:
         self.orders: list[Order] = []
@@ -160,7 +164,7 @@ class OrderService:
             order_id = self.order_repository.next_order_id()
             order = Order(order_id, order_list, OrderStatus.PLACED)
             self.order_repository.save(order)
-        except Exception:
+        except OrderRepositoryError:
             self.inventory_service.restore_stock_for_order(order_list)
             return OrderRecord(False, "Order placement failed", None)
 

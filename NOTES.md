@@ -3527,3 +3527,98 @@ undo A = restore inventory
 ```
 
 This is still not a full database transaction or full Unit of Work. It is the pure-Python intuition behind why transaction boundaries matter.
+
+## Project 04 Bottleneck 17: Broad Exception Handling Hides Bugs
+
+The first rollback implementation used:
+
+```python
+except Exception:
+```
+
+That fixed the rollback pressure, but created a new one:
+
+```text
+Every failure was treated as order-placement failure.
+```
+
+Different failures should not always be handled the same way.
+
+Useful split:
+
+```text
+business failure -> normal failed result
+known recoverable technical failure -> rollback and return safe failed result
+unexpected bug -> allow it to surface
+```
+
+In this project:
+
+```text
+stock unavailable / product missing
+  -> business failure
+  -> InventoryResult(False, ...)
+  -> no exception needed
+
+order repository save/id failure after inventory changed
+  -> known recoverable persistence failure
+  -> restore inventory
+  -> return OrderRecord(False, "Order placement failed", None)
+
+programming bug / unexpected runtime error
+  -> do not hide it under OrderRecord
+  -> let the real error move upward to tests, logs, framework, or monitoring
+```
+
+So we introduced:
+
+```python
+class OrderRepositoryError(Exception):
+    pass
+```
+
+Mental model:
+
+```text
+Exception = broad parent category
+OrderRepositoryError = specific child category
+```
+
+Now `OrderService.place_order(...)` catches only:
+
+```python
+except OrderRepositoryError:
+```
+
+This means:
+
+```text
+OrderService only catches the repository failure it knows how to recover from.
+```
+
+Allowed to surface means:
+
+```text
+do not catch that error here
+let it travel upward to a higher boundary
+```
+
+In tests, that higher boundary is pytest.
+
+In a backend API, that higher boundary may be the route/controller/framework, which usually logs the stack trace and returns a safe `500 Internal Server Error` response.
+
+Current DB-design distance:
+
+```text
+about 4-5 focused topics away
+```
+
+Likely remaining topics before DB design:
+
+```text
+rollback failure pressure
+cleaner transaction boundary / Unit of Work intuition
+service interfaces / dependency inversion basics
+idempotency basics
+module split when file pressure appears
+```
