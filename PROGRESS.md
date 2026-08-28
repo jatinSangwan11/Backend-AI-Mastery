@@ -639,3 +639,409 @@ Phase 3 and Phase 4 continuity rule:
 - Codex should preserve the Project 01 pattern: naive implementation, added requirement, visible pain, refactor, vocabulary, tests, notes and also once the topic is complete tell jatin the name of the topic we just learned or if jatin asks you for the topic we are learning then tell him
 - You type substantial code for muscle memory whenever possible.
 - Git will be managed like a production repo once initialized.
+
+## 2026-08-20
+
+Started Phase 2, Project 04: Inventory and Order Management.
+
+Project path:
+
+- `projects/04-inventory-order-management/`
+
+Current files:
+
+- `order.py`
+- `tests/test_order.py`
+
+Initial pressure:
+
+- A user attempts to place an order.
+- The system checks whether requested product quantity is available.
+- If stock is available, inventory is reduced.
+- If stock is unavailable or the product does not exist, inventory is not changed.
+
+First result-contract pressure:
+
+- `True` / `False` became too weak because failure can mean multiple things:
+  - product not found
+  - insufficient stock
+- Introduced `OrderRecord` as a small dataclass result object:
+  - `success`
+  - `message`
+  - `order_id`
+- Tests compare deterministic dataclass values.
+
+Second pressure: multi-product orders.
+
+- `place_order(...)` now accepts a list of `UserOrder` items instead of one product and one quantity.
+- Introduced `UserOrder` as the ordered-item input contract:
+  - `product_name`
+  - `quantity`
+- Implemented all-or-nothing inventory update:
+  - copy inventory
+  - validate and apply every requested item to the copy
+  - commit back to the original inventory only after every item succeeds
+  - leave original inventory unchanged on any failure
+
+Topics learned:
+
+- Result Contract / Result Object
+- Dataclass equality in tests
+- Input contract for requested order items
+- Python name binding vs mutating a shared dict
+- Shallow copy is enough for the current flat inventory shape
+- All-or-nothing update / commit-after-validation
+- Early pure-Python version of transaction thinking
+
+Current Project 04 test result:
+
+- Ran project 04 tests: 6 passed.
+
+Next pressure:
+
+- `place_order(...)` still owns too much:
+  - product existence check
+  - stock validation
+  - stock mutation
+  - order workflow result
+- Next discussion should ask who owns stock behavior:
+  - raw inventory dict
+  - order workflow
+  - inventory object/service
+
+Same-day Project 04 checkpoint:
+
+- Introduced `InventoryService` as the owner of inventory behavior while keeping the inventory storage shape as `dict[str, int]`.
+- Removed the premature `InventoryProduct` list shape for now because changing storage representation and introducing a service at the same time created too much pressure.
+- Current responsibility split:
+  - `place_order(...)` coordinates order placement.
+  - `InventoryService` owns product existence checks, stock validation, stock reduction, copy-and-commit, and the raw inventory dict.
+- Updated the caller boundary so `place_order(...)` receives an `InventoryService`, not a raw inventory dict.
+- Discussed why `InventoryService.__init__(inventory: dict[str, int])` documents the current storage shape:
+  - product name as `str`
+  - available quantity as `int`
+- Discussed `.copy()`:
+  - creates a new shallow dict with the same key-value pairs
+  - safe for the current flat inventory because values are integers
+  - lets the workflow apply all changes to the copy before committing
+- Discussed encapsulation:
+  - `place_order(...)` knows what outcome it needs
+  - `InventoryService` knows how inventory data should be checked and changed
+  - inventory structure is hidden behind inventory behavior
+- Topic learned:
+  - Encapsulation / Responsibility Ownership
+- Ran project 04 tests after the refactor: 6 passed.
+
+Resume point:
+
+- Continue from the `InventoryService` boundary.
+- Next likely pressure: `InventoryService.reduce_stock_for_order(...)` returns `OrderRecord`, which may mean inventory logic is now leaking order-result language.
+- Ask whether inventory should return order-level results or inventory-level results/status.
+
+## 2026-08-24
+
+Continued Phase 2, Project 04: Inventory and Order Management.
+
+Resolved boundary leak:
+
+- `InventoryService.reduce_stock_for_order(...)` no longer returns `OrderRecord`.
+- Introduced `InventoryResult` as an inventory-level result contract:
+  - `success`
+  - `message`
+- `InventoryService` now speaks inventory language:
+  - `"Stock reduced"`
+  - `"Product not found"`
+  - `"Only N units available"`
+- `place_order(...)` translates inventory result into order result:
+  - inventory failure -> `OrderRecord(False, message, None)`
+  - inventory success -> `OrderRecord(True, "Order placed", "order-1")`
+
+Introduced richer inventory record:
+
+- Added `InventoryProduct` dataclass:
+  - `product_name`
+  - `quantity`
+  - `sku`
+  - `category`
+- Changed inventory storage from `dict[str, int]` to `dict[str, InventoryProduct]`.
+- `place_order(...)` did not need to know about this storage change because it still only depends on `InventoryService`.
+- Discussed SKU:
+  - SKU means Stock Keeping Unit
+  - it is a stable business/internal identifier for tracking a specific sellable item or variant
+
+Deepened copy semantics:
+
+- `dict.copy()` is shallow:
+  - it creates a new dict container
+  - nested/mutable objects inside are still shared
+- Because inventory values are now `InventoryProduct` objects, directly mutating `inventory_copy[item].quantity` would also mutate the original product object.
+- Current implementation replaces the copied dict entry with a new `InventoryProduct` to preserve all-or-nothing behavior.
+
+Added invariant protection:
+
+- `InventoryProduct.quantity` must never be negative.
+- Added `InventoryProduct.__post_init__(...)` to raise `ValueError` when quantity is below zero.
+- Discussed why the object should own this rule:
+  - negative quantity makes the inventory product itself invalid
+  - the rule is not only about order placement
+  - putting the check inside `InventoryProduct` prevents invalid objects from existing anywhere
+
+Topics learned:
+
+- Boundary-specific result contracts
+- Storage representation hidden behind a service boundary
+- SKU as inventory/product identifier
+- Shallow copy vs shared nested objects
+- Invariant Protection
+- `dataclass.__post_init__`
+
+Current Project 04 test result:
+
+- Ran project 04 tests: 7 passed.
+
+Next pressure:
+
+- Quantity is protected for `InventoryProduct`, but `UserOrder.quantity` can still be `0` or negative.
+- Ask whether an ordered item with zero/negative quantity is meaningful, and where that rule should live.
+
+Same-day continuation:
+
+- Added `UserOrder.__post_init__(...)` to protect the ordered-item quantity invariant.
+- `UserOrder.quantity` must be greater than zero.
+- Discussed why `__post_init__` is used in dataclasses:
+  - dataclass generates `__init__`
+  - `__post_init__` runs after field assignment
+  - it is the clean hook for validation/setup while keeping dataclass convenience
+- Introduced `OrderService` as the owner of the order placement workflow.
+- Removed the standalone `place_order(...)` function after tests were updated to call `OrderService.place_order(...)`.
+- Current responsibility split:
+  - `OrderService` owns order placement orchestration.
+  - `InventoryService` owns inventory data and stock behavior.
+  - `InventoryProduct` protects inventory-product validity.
+  - `UserOrder` protects requested-item validity.
+  - `OrderRecord` remains the caller-facing order result.
+- Discussed the LLD mental model:
+  - responsibility assignment: who owns each job
+  - boundaries: what each component can see/touch
+  - invariants: rules that must always be true
+  - collaboration: how components ask each other to do work without stealing responsibilities
+- Topic now visible:
+  - Single Responsibility Principle intuition
+- Ran project 04 tests after the `OrderService` refactor: 8 passed.
+
+Next pressure:
+
+- `OrderService` returns `order_id="order-1"`, but no real `Order` object is created or stored yet.
+- Move from caller-facing `OrderRecord` to an internal `Order` domain object with `order_id`, `items`, and `status`.
+
+## 2026-08-27
+
+Resumed Phase 2, Project 04 after a short break.
+
+Clarified the current pressure:
+
+- `OrderService.place_order(...)` returned `OrderRecord(True, "Order placed", "order-1")`.
+- That meant the caller received an `order_id`, but the system had no internal order state behind that id.
+- The problem was not the caller-facing response; the problem was missing business/domain state.
+
+Important distinction:
+
+- `OrderRecord` is the caller-facing operation result:
+  - did the operation succeed?
+  - what message should the caller receive?
+  - what order id should the caller use?
+- `Order` is the internal domain object:
+  - what order was created?
+  - what items were ordered?
+  - what is the order status?
+
+Implemented the first `Order` domain object:
+
+- Added `Order` dataclass:
+  - `order_id`
+  - `items`
+  - `status`
+- `OrderService.place_order(...)` now:
+  - asks `InventoryService` to reduce stock
+  - creates an `Order` only after inventory succeeds
+  - stores successful orders in `self.orders`
+  - returns `OrderRecord` to the caller
+- Current order creation rule:
+  - inventory failure -> no order is created
+  - inventory success -> create `Order(..., status="PLACED")`
+
+Current behavior:
+
+- `OrderRecord` remains the external/caller-facing response.
+- `Order` is now the internal business record.
+- `order_id` is no longer just a free-floating string; it is tied to an internal `Order` object.
+
+Current Project 04 test result:
+
+- Ran project 04 tests: 8 passed.
+
+Next pressure:
+
+- `OrderService` stores orders in `self.orders`, but this is still just an internal list.
+- We need a way to retrieve an order by `order_id`, which will naturally lead toward storage responsibility and eventually Repository.
+
+## 2026-08-28
+
+Continued Phase 2, Project 04.
+
+Order status modeling:
+
+- Introduced `OrderStatus` enum for fixed order lifecycle states.
+- Current states:
+  - `PLACED`
+  - `CANCELLED`
+- Clarified:
+  - `OrderRecord.success` is operation outcome.
+  - `Order.status` is lifecycle state of an actual order.
+  - `PLACED` means the order was accepted/created by the system, not delivered/completed.
+
+Order repository split:
+
+- Introduced `OrderRepository`.
+- Moved order storage mechanics out of `OrderService`:
+  - generate next order id
+  - save order
+  - get order by id
+- `OrderService` now owns workflow/orchestration and delegates storage mechanics to `OrderRepository`.
+- This made Single Responsibility Principle explicit:
+  - `OrderService` changes when order workflow changes.
+  - `OrderRepository` changes when order persistence/storage mechanics change.
+
+Order retrieval:
+
+- Added `OrderService.get_order(order_id)`.
+- Tests now cover:
+  - retrieving a placed order by id
+  - returning `None` for a missing order
+- This avoids callers reaching into raw `order_storage.orders` for normal usage.
+
+Cancellation lifecycle:
+
+- Added `OrderService.cancel_order(order_id)`.
+- Behavior:
+  - missing order -> `OrderRecord(False, "Order not found", None)`
+  - placed order -> status changes to `CANCELLED`
+  - already cancelled order -> `OrderRecord(False, "Order already cancelled", order_id)`
+- Then added inventory restoration on cancellation:
+  - placing an order reduces inventory
+  - cancelling the placed order restores inventory
+- Discussed sequencing:
+  - restore inventory first
+  - if restoration succeeds, mark order as `CANCELLED`
+  - this reveals the deeper atomicity/transaction problem for later
+
+Inventory repository split:
+
+- Introduced `InventoryRepository`.
+- Moved raw inventory dict ownership out of `InventoryService`.
+- First split moved copy/replace mechanics into the repository.
+- Refined split after noticing `InventoryService` still indexed the dict directly.
+- Added `InventoryChangeSet` as an explicit temporary inventory-change boundary.
+- Current inventory collaboration:
+  - `InventoryService` loops over requested order items and owns stock business behavior.
+  - `InventoryRepository` owns how products are fetched/saved/committed in the storage shape.
+  - `InventoryChangeSet` holds pending inventory changes before commit.
+
+Topics learned:
+
+- Enum for fixed domain states
+- Operation outcome vs domain lifecycle state
+- Order lifecycle state transition
+- State transition with side effects
+- Single Responsibility Principle
+- Repository pattern
+- Repository as boundary between business logic and persistence
+- Inventory change set / pending changes before commit
+- Early Unit of Work / transaction-boundary intuition
+- Atomicity: multi-state changes should eventually succeed or fail together
+
+Current Project 04 test result:
+
+- Ran project 04 tests: 13 passed.
+
+Resume point:
+
+- Continue when Jatin says start.
+- Next topic: deepen the transaction/atomicity problem now that repository boundaries are named.
+- Current important pressure:
+  - order placement changes inventory and saves an order
+  - order cancellation restores inventory and changes order status
+  - these are multi-state workflows that should eventually be atomic
+
+Repository vocabulary update:
+
+- Renamed `OrderStorage` to `OrderRepository`.
+- Renamed `InventoryStorage` to `InventoryRepository`.
+- Reason:
+  - the objects are not just generic storage holders
+  - they act as the layer between business services and persistence mechanics
+  - in production, this layer would hide DB/Redis/file/external-service calls from the business workflow
+- Current mental model:
+  - services own business workflows
+  - repositories own save/fetch/commit mechanics
+  - domain objects own business state and invariants
+
+Save-failure rollback pressure:
+
+- Found the next transaction/atomicity pressure inside `OrderService.place_order(...)`.
+- Risky flow:
+  - inventory reduction succeeds
+  - order id/order creation/save happens next
+  - if order saving fails, inventory would stay reduced without a saved order
+- Added starter-level recovery:
+  - wrap order id creation, order creation, and repository save in `try/except`
+  - if that block fails, call `InventoryService.restore_stock_for_order(order_list)`
+  - return `OrderRecord(False, "Order placement failed", None)`
+- Added a regression test using a failing order repository to simulate save failure after stock reduction.
+- Verified that inventory is restored and no order is saved when the repository save fails.
+- Concept touched:
+  - manual rollback
+  - compensating action
+  - transaction-boundary intuition
+  - atomicity pressure across inventory and order state
+
+Current Project 04 test result:
+
+- Ran project 04 tests: 14 passed.
+
+Resume point:
+
+- Next pressure should continue from transaction/atomicity:
+  - current code manually restores inventory when order save fails
+  - this works at starter level
+  - but exception handling, rollback failure, and cleaner transaction boundaries are still open design pressure
+
+Specific exception handling refinement:
+
+- Refined the broad rollback handler in `OrderService.place_order(...)`.
+- Replaced `except Exception` with a specific custom exception:
+  - `OrderRepositoryError`
+- Current behavior:
+  - business failures such as product missing or insufficient stock return normal failure results
+  - known order repository failure after inventory reduction triggers inventory restore and returns order-placement failure
+  - unexpected bugs are allowed to surface instead of being hidden as a fake `OrderRecord`
+- Clarified "allowed to surface":
+  - the function does not catch that error
+  - the error travels upward to the caller/test/framework/logging boundary
+  - in pytest, `pytest.raises(...)` can observe it
+  - in a real backend, the framework would usually log it and return a safe `500`
+- Added a test proving unexpected `RuntimeError` is not swallowed.
+
+Current Project 04 test result:
+
+- Ran project 04 tests: 15 passed.
+
+Wrap-up checkpoint:
+
+- Today ended on custom exceptions and specific exception handling.
+- Remaining before DB design is roughly 4-5 focused topics:
+  - rollback failure pressure
+  - cleaner transaction boundary / Unit of Work intuition
+  - service interfaces / dependency inversion basics
+  - idempotency basics
+  - possible module split once file pressure appears
