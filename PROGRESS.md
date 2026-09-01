@@ -1156,3 +1156,43 @@ Resume point:
 
 - Next likely pressure: `OrderService` now depends on concrete `InMemoryUnitOfWork`.
 - This leads naturally toward service interfaces / dependency inversion basics before DB design.
+
+Dependency inversion / protocol checkpoint:
+
+- Discussed the difference between dataclass and protocol:
+  - dataclass creates real runtime data objects
+  - protocol describes the expected behavior/shape of a collaborator
+- Added `UnitOfWork` protocol in `order.py`.
+- `UnitOfWork` protocol currently requires:
+  - `inventory_repository`
+  - `order_repository`
+  - `begin()`
+  - `commit()`
+  - `rollback()`
+- Refactored `OrderService.__init__(...)` from:
+  - `unit_of_work: InMemoryUnitOfWork`
+- To:
+  - `unit_of_work: UnitOfWork`
+- Runtime behavior stayed the same.
+- Design meaning:
+  - `OrderService` now depends on the transaction-boundary contract
+  - not the concrete in-memory implementation
+  - `InMemoryUnitOfWork` satisfies the protocol by having the required shape
+- Marked this as Dependency Inversion Principle:
+  - high-level business workflow should not depend directly on low-level concrete implementation
+  - both should point toward a stable contract/abstraction
+
+Current Project 04 test result:
+
+- Ran project 04 tests: 16 passed.
+
+SOLID principles touched so far:
+
+- Single Responsibility Principle
+- Dependency Inversion Principle
+
+Resume point:
+
+- Next pressure can continue from idempotency:
+  - what happens if a caller retries `place_order(...)` after timeout/failure?
+  - this is the last major backend correctness pressure before DB design.

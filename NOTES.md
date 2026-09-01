@@ -3885,3 +3885,188 @@ self.inventory_repository.inventory = snapshot
 ```
 
 Because external code/tests may still hold a reference to the original inventory dict. `clear()` + `update()` preserves the original dict object and changes its contents.
+
+## Project 04 Important Concept: Dataclass vs Protocol
+
+This distinction is important for LLD.
+
+A dataclass is for real objects that carry data.
+
+Example:
+
+```python
+@dataclass
+class Order:
+    order_id: str
+    items: list[UserOrder]
+    status: OrderStatus
+```
+
+This creates actual runtime objects:
+
+```python
+order = Order("order-1", items, OrderStatus.PLACED)
+```
+
+The dataclass gives useful generated methods such as:
+
+```text
+__init__
+__eq__
+__repr__
+```
+
+Mental model:
+
+```text
+dataclass = real object / data shape
+```
+
+A protocol describes expected behavior or shape.
+
+Example:
+
+```python
+class UnitOfWork(Protocol):
+    inventory_repository: InventoryRepository
+    order_repository: OrderRepository
+
+    def begin(self) -> None:
+        ...
+
+    def commit(self) -> None:
+        ...
+
+    def rollback(self) -> None:
+        ...
+```
+
+This says:
+
+```text
+Any object with these attributes and methods can be treated as a UnitOfWork.
+```
+
+Mental model:
+
+```text
+Protocol = behavior contract / promise
+Concrete class = actual implementation
+```
+
+In Project 04:
+
+```text
+Order = dataclass
+because it is real order data.
+
+InventoryProduct = dataclass
+because it is real inventory-product data.
+
+InMemoryUnitOfWork = concrete class
+because it actually snapshots, commits, and rolls back.
+
+UnitOfWork = Protocol
+because OrderService only needs the transaction-boundary behavior,
+not the exact implementation.
+```
+
+Key difference:
+
+```text
+Dataclass answers: what data does this object hold?
+Protocol answers: what behavior must this object provide?
+```
+
+This connects to Dependency Inversion Principle.
+
+Dependency Inversion Principle:
+
+```text
+High-level business code should not depend on low-level concrete details.
+Both should depend on abstractions/contracts.
+```
+
+In this project:
+
+```text
+OrderService = high-level business workflow
+InMemoryUnitOfWork = low-level in-memory transaction implementation
+UnitOfWork protocol = abstraction / contract
+```
+
+Old dependency:
+
+```text
+OrderService -> InMemoryUnitOfWork
+```
+
+Better dependency:
+
+```text
+OrderService -> UnitOfWork protocol
+InMemoryUnitOfWork -> satisfies UnitOfWork protocol
+```
+
+Why it is called inversion:
+
+```text
+Instead of high-level code pointing directly at a low-level implementation,
+both sides point toward a stable contract.
+```
+
+Practical payoff:
+
+```text
+Later we can introduce DatabaseUnitOfWork without changing the core idea of OrderService.
+```
+
+Runtime vs type expectation:
+
+```python
+unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
+order_service = OrderService(inventory_service, unit_of_work)
+```
+
+At runtime, we still initialize a concrete object:
+
+```text
+InMemoryUnitOfWork
+```
+
+But `OrderService` is typed against the contract:
+
+```python
+def __init__(self, inventory_service: InventoryService, unit_of_work: UnitOfWork):
+```
+
+So:
+
+```text
+runtime object = InMemoryUnitOfWork
+type/expectation = UnitOfWork protocol
+```
+
+This is abstraction.
+
+```text
+Abstraction = what behavior is needed
+Implementation = how that behavior is done
+```
+
+In Project 04:
+
+```text
+Abstraction:
+  begin()
+  commit()
+  rollback()
+  order_repository
+
+Implementation:
+  copy snapshots
+  clear/update dict
+  restore list
+```
+
+Protocol is one way to express abstraction in Python. Dependency Inversion uses this abstraction so high-level workflow code does not depend directly on low-level concrete classes.

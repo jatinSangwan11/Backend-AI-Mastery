@@ -1,6 +1,7 @@
 import copy
 from dataclasses import dataclass
 from enum import Enum
+from typing import Protocol
 
 
 @dataclass
@@ -157,6 +158,20 @@ class UnitOfWorkError(Exception):
     pass
 
 
+class UnitOfWork(Protocol):
+    inventory_repository: InventoryRepository
+    order_repository: OrderRepository
+
+    def begin(self) -> None:
+        ...
+
+    def commit(self) -> None:
+        ...
+
+    def rollback(self) -> None:
+        ...
+
+
 class InMemoryUnitOfWork:
     def __init__(self, inventory_repository: InventoryRepository, order_repository: OrderRepository) -> None:
         self.inventory_repository = inventory_repository
@@ -188,7 +203,7 @@ class InMemoryUnitOfWork:
 
 class OrderService:
 
-    def __init__(self, inventory_service: InventoryService, unit_of_work: InMemoryUnitOfWork) -> None:
+    def __init__(self, inventory_service: InventoryService, unit_of_work: UnitOfWork) -> None:
         self.inventory_service = inventory_service
         self.unit_of_work = unit_of_work
 
