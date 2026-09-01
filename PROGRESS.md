@@ -1045,3 +1045,114 @@ Wrap-up checkpoint:
   - service interfaces / dependency inversion basics
   - idempotency basics
   - possible module split once file pressure appears
+
+## 2026-09-01
+
+Resumed Phase 2, Project 04 on branch:
+
+```text
+Phase-2_project04-2
+```
+
+Rollback failure pressure:
+
+- Added `InventoryRepositoryError`.
+- Updated `OrderService.place_order(...)` so rollback itself is protected:
+  - order repository failure after inventory reduction triggers inventory restore
+  - if inventory restore also fails, return a critical failure result
+- Critical failure response:
+  - `OrderRecord(False, "Order placement failed and inventory restore failed", None)`
+- Added a test proving the inconsistent-state risk:
+  - inventory reduction succeeds
+  - order save fails
+  - inventory restore fails
+  - inventory remains reduced
+  - no order is saved
+
+Current Project 04 test result:
+
+- Ran project 04 tests: 16 passed.
+
+Important realization:
+
+- Returning a better error message does not repair broken state.
+- If rollback fails, the business data can still be inconsistent:
+  - order not saved
+  - inventory still reduced
+- This shows the limit of pure in-memory/manual rollback design.
+
+Transaction-boundary bridge:
+
+- Transactional boundary means:
+  - the group of operations that must succeed or fail together
+- For order placement, the boundary should include:
+  - reduce inventory
+  - save order
+- A database transaction can provide atomicity:
+  - both changes happen
+  - or neither change happens
+- This pressure now naturally escalates us toward DB design instead of introducing DBs randomly.
+
+Resume point:
+
+- Continue from transaction boundary / Unit of Work intuition.
+- Remaining before DB design is now roughly 3-4 focused topics:
+  - cleaner transaction boundary / Unit of Work intuition
+  - service interfaces / dependency inversion basics
+  - idempotency basics
+  - possible module split once file pressure appears
+
+Unit of Work implementation:
+
+- Introduced the Unit of Work pattern at starter level.
+- Added:
+  - `InMemoryUnitOfWork`
+  - `UnitOfWorkError`
+- `InMemoryUnitOfWork` owns the transaction boundary across:
+  - `InventoryRepository`
+  - `OrderRepository`
+- Current methods:
+  - `begin()` snapshots inventory and orders
+  - `commit()` discards snapshots after success
+  - `rollback()` restores inventory and orders from snapshots
+- Refactored `OrderService`:
+  - now receives `InMemoryUnitOfWork`
+  - uses `unit_of_work.order_repository` for order persistence
+  - uses `unit_of_work.begin()` before the placement workflow
+  - uses `unit_of_work.commit()` after successful order placement
+  - uses `unit_of_work.rollback()` when order repository failure or unexpected error happens
+- Responsibility shift:
+  - `OrderService` owns order-placement workflow
+  - `UnitOfWork` owns transaction boundary and rollback mechanics
+  - repositories own storage access
+  - services own business behavior
+- Updated rollback failure test:
+  - old pressure was "inventory restore failed"
+  - new pressure is "unit of work rollback failed"
+  - critical response is now `OrderRecord(False, "Order placement failed and rollback failed", None)`
+- Clarified why `except Exception: rollback(); raise` is different from swallowing all exceptions:
+  - it restores state first
+  - then re-raises the original unexpected error
+  - the bug still surfaces to the test/framework/logs
+- Clarified Python reference behavior:
+  - `self.inventory_repository = inventory_repository` stores the same object reference
+  - `inventory.clear()` empties the existing dict; it does not become `None`
+  - `clear()` + `update(snapshot)` restores the same dict object so outside references still see the repaired contents
+
+Current Project 04 test result:
+
+- Ran project 04 tests: 16 passed.
+
+Design patterns learned so far in Phase 2:
+
+- Repository pattern
+- Unit of Work pattern
+
+SOLID principles touched so far:
+
+- Single Responsibility Principle
+
+Resume point:
+
+- Next likely pressure: `OrderService` now depends on concrete `InMemoryUnitOfWork`.
+- This leads naturally toward service interfaces / dependency inversion basics before DB design.
