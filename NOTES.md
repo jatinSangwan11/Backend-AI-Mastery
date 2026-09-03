@@ -3724,6 +3724,46 @@ A relational DB gives us transactions and atomicity.
 
 This is the bridge from LLD into DB design.
 
+## Project 04 Bottleneck 20: Retrying Order Placement Can Duplicate Work
+
+The client may retry an order request when the first response is lost even though the server completed the operation.
+
+Without a stable request identity, the retry can:
+
+```text
+create a second order
+reduce inventory a second time
+```
+
+The caller now supplies one `idempotency_key` for one logical order-placement operation. It reuses that key for network retries and generates a different key for a genuinely new operation.
+
+Responsibility split:
+
+```text
+Caller = generate and reuse the key
+OrderRepository = save and find orders by the key
+OrderService = decide whether the call is new, a retry, or a conflict
+```
+
+Current rules:
+
+```text
+new key + valid order -> create the order
+same key + same items -> return the original order
+same key + different items -> reject as a conflict
+failed attempt with no saved order -> allow a later retry
+```
+
+Concept name:
+
+```text
+Idempotency
+```
+
+An idempotent operation can be repeated without repeating its intended side effects.
+
+The current in-memory lookup is educational but not concurrency-safe. In the database version, a unique constraint must enforce key uniqueness, and the idempotency check and state changes must share the transaction boundary.
+
 ## Project 04 Bottleneck 19: OrderService Owns Transaction Mechanics
 
 After rollback failure, the next pressure was inside `OrderService.place_order(...)`.

@@ -1196,3 +1196,33 @@ Resume point:
 - Next pressure can continue from idempotency:
   - what happens if a caller retries `place_order(...)` after timeout/failure?
   - this is the last major backend correctness pressure before DB design.
+
+## 2026-09-03
+
+Idempotent order-placement checkpoint:
+
+- Added a caller-provided `idempotency_key` to `OrderService.place_order(...)`.
+- Stored the key on the successful `Order` domain object.
+- Added `OrderRepository.get_order_by_idempotency_key(...)` because lookup mechanics belong to the repository boundary.
+- `OrderService` now owns the business decisions for an incoming key:
+  - new key -> place and save a new order
+  - existing key with the same items -> return the original order without reducing stock again
+  - existing key with different items -> return `Idempotency key conflict`
+- Failed business attempts are not stored as orders, so the same key can be retried later if the underlying condition changes.
+- Updated all existing order-placement tests to provide an idempotency key.
+- Added tests for:
+  - first-time successful placement
+  - safe retry with the same key and items
+  - conflicting reuse of a key with different items
+  - failed placement followed by a successful retry using the same key
+- Ran Project 04 tests: 19 passed.
+
+Important production limitation:
+
+- The in-memory `find then save` flow is not safe against simultaneous requests.
+- The database version should enforce a unique constraint on the idempotency key and keep the check/order/inventory changes inside the transaction boundary.
+
+Resume point:
+
+- Idempotency basics are complete.
+- Continue into database design for Project 04.
