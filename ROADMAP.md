@@ -61,6 +61,8 @@ Core OOP and LLD topics:
 
 Design patterns to learn through pressure:
 
+The detailed locked catalog, completion standard, and Phase 2-4 placement are maintained in `LLD_CATALOG.md`.
+
 - Strategy
 - Factory
 - Adapter

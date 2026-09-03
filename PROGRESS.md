@@ -1544,3 +1544,10 @@ Updated resume point:
 
 - Index fundamentals for the current schema are complete.
 - Next topic: design the PostgreSQL transaction for order placement, then handle concurrent attempts to purchase the final available units.
+
+LLD curriculum lock:
+
+- Added `LLD_CATALOG.md` as the dedicated design-pattern curriculum and interview-revision reference.
+- Locked the core LLD, persistence, and advanced distributed-backend pattern lists.
+- Recorded which patterns are complete, which remain, their likely project pressures, SOLID coverage, curriculum placement, and the standard for considering a pattern learned.
+- Linked the catalog from `ROADMAP.md`.
