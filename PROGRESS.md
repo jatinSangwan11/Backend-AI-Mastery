@@ -1355,3 +1355,64 @@ Updated resume point:
 
 - Decide foreign-key deletion behavior between `orders`, `order_items`, and `inventory_products`.
 - Begin with what should happen to an order's item rows if the parent order is deleted.
+
+Same-day continuation — deletion, cancellation, and product availability:
+
+- Identified the orphan-row pressure:
+  - deleting an order while leaving its `order_items` would leave item rows pointing to a missing parent
+- Selected `ON DELETE CASCADE` for `order_items.order_id -> orders.id`:
+  - if an order is physically deleted, its dependent item rows are automatically deleted
+- Distinguished physical deletion from business cancellation:
+  - deletion removes the order and cascades to its items
+  - cancellation retains the order and its items as history, changes status to `CANCELLED`, restores inventory, and updates `updated_at`
+- Cancellation remains a single transaction boundary:
+  - restore inventory
+  - change order status
+  - update timestamp
+  - commit or roll back together
+- A separate status on each order item is unnecessary while the system only supports whole-order cancellation.
+- Item-level state becomes relevant only for partial cancellation, fulfilment, returns, or backorders.
+- Selected restrictive deletion for `order_items.product_id -> inventory_products.id`:
+  - PostgreSQL must reject physical deletion of products referenced by historical order items
+  - deleting a product must not cascade into and erase order history
+- Distinguished stock from sellability:
+  - `quantity = 0` means currently out of stock and possibly restockable
+  - `is_active = false` means intentionally unavailable/discontinued even if physical stock remains
+- Added `is_active BOOLEAN NOT NULL DEFAULT true` to `inventory_products`.
+- New order placement must require both:
+  - product is active
+  - sufficient quantity is available
+
+Current database tables:
+
+```text
+inventory_products
+------------------
+id            primary key
+sku           unique, not null
+product_name  not null
+category      nullable
+quantity      not null, check quantity >= 0
+is_active     boolean, not null, default true
+
+orders
+----------------------------------------------
+id               primary key
+order_number     unique, not null
+status           order_status, not null, no default
+idempotency_key  unique, not null
+created_at       timestamptz, not null, default now()
+updated_at       timestamptz, not null, default now()
+
+order_items
+----------------------------------------------
+id          primary key
+order_id    foreign key -> orders.id, on delete cascade
+product_id  foreign key -> inventory_products.id, delete restricted
+quantity    not null, check quantity > 0
+unique      (order_id, product_id)
+```
+
+Updated resume point:
+
+- Move to database indexes and derive them from actual lookup/query paths.

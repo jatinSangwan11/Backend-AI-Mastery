@@ -4582,3 +4582,274 @@ If an orders row is deleted, what should PostgreSQL do with its order_items rows
 ```
 
 This introduces foreign-key deletion behavior such as `CASCADE` and `RESTRICT`.
+
+## Project 04 DB Design 04: Deletion Is Not Cancellation
+
+The next pressure came from the foreign-key relationship:
+
+```text
+order_items.order_id -> orders.id
+```
+
+If PostgreSQL deleted an order but retained its items, those item rows would point to a parent that no longer exists:
+
+```text
+orders
+  no row with id = 1
+
+order_items
+  order_id = 1
+  order_id = 1
+```
+
+These would be orphaned rows.
+
+Two foreign-key behaviors were considered:
+
+```text
+RESTRICT
+  -> refuse to delete the parent while child rows exist
+
+CASCADE
+  -> delete dependent child rows automatically with the parent
+```
+
+An order item has no independent meaning after its parent order is physically removed. Therefore:
+
+```sql
+order_id BIGINT NOT NULL
+    REFERENCES orders(id)
+    ON DELETE CASCADE
+```
+
+### Physical deletion versus business cancellation
+
+Physical deletion means:
+
+```text
+remove the orders row
+automatically remove its order_items rows
+```
+
+Cancellation is a business state transition:
+
+```text
+retain the order
+retain its order_items
+change status from PLACED to CANCELLED
+restore inventory
+update updated_at
+```
+
+Cancelled item history must remain available to answer:
+
+```text
+What did the customer order?
+Which quantities were restored?
+What should customer support display?
+What happened in the original transaction?
+```
+
+The parent order's `CANCELLED` status currently applies to every item. A status column on each `order_items` row would add no information under the current whole-order cancellation requirement.
+
+Item-level status may become necessary if requirements later include:
+
+```text
+partial cancellation
+partial fulfilment
+individual returns
+backordered items
+```
+
+Cancellation must be transactional:
+
+```text
+restore inventory
++ set order status to CANCELLED
++ set updated_at to now()
+= commit all changes together
+```
+
+If any part fails, the transaction must roll back all parts.
+
+## Project 04 DB Design 05: Historical Products Must Not Disappear
+
+The next relationship was:
+
+```text
+order_items.product_id -> inventory_products.id
+```
+
+Using `ON DELETE CASCADE` here would be dangerous. Deleting a product could erase item rows from historical orders and corrupt their meaning.
+
+The selected rule is restrictive deletion:
+
+```sql
+product_id BIGINT NOT NULL
+    REFERENCES inventory_products(id)
+    ON DELETE RESTRICT
+```
+
+Meaning:
+
+```text
+product is referenced by an old order item
+-> PostgreSQL rejects physical product deletion
+-> order history remains intact
+```
+
+`NO ACTION`, PostgreSQL's default behavior, can also reject the deletion through the foreign-key constraint, with timing differences for deferrable constraints. `RESTRICT` is written here to make the intended policy explicit at this learning stage.
+
+### Quantity zero is not deletion
+
+These states mean different things:
+
+```text
+quantity = 0
+  -> product exists but is currently out of stock
+  -> product may be restocked later
+
+physical deletion
+  -> product row no longer exists
+```
+
+Even if `quantity = 0`, a referenced product cannot be deleted. Quantity does not remove historical foreign-key references.
+
+An order attempt for a zero-quantity product should produce no persistent side effects:
+
+```text
+detect insufficient stock
+-> create no order
+-> create no order_items
+-> do not reduce inventory
+```
+
+### Stock availability versus business sellability
+
+Another distinction became visible:
+
+```text
+quantity
+  -> how many physical units are available
+
+is_active
+  -> whether the business currently permits this product to be sold
+```
+
+Examples:
+
+```text
+active + quantity 0
+  -> temporarily out of stock, but may be restocked
+
+inactive + quantity 10
+  -> stock physically exists, but the product is discontinued or disabled
+```
+
+The inventory-product design therefore gains:
+
+```sql
+is_active BOOLEAN NOT NULL DEFAULT true
+```
+
+The default makes newly created products sellable unless explicitly disabled. The `NOT NULL` constraint avoids an unclear third state where activity is unknown.
+
+New order placement must satisfy both business conditions:
+
+```text
+product is active
+requested quantity is available
+```
+
+The row remains stored when inactive, so historical order relationships stay valid.
+
+## Project 04 DB Design: Current Table Revision Sheet
+
+### `inventory_products`
+
+```text
+id            primary key
+sku           unique, not null
+product_name  not null
+category      nullable
+quantity      not null, check quantity >= 0
+is_active     boolean, not null, default true
+```
+
+Responsibilities:
+
+```text
+identify a stocked product
+preserve product information
+record current available stock
+record whether new sales are allowed
+```
+
+### `orders`
+
+```text
+id               primary key
+order_number     unique, not null
+status           order_status, not null, no default
+idempotency_key  unique, not null
+created_at       timestamptz, not null, default now()
+updated_at       timestamptz, not null, default now()
+```
+
+Responsibilities:
+
+```text
+identify the order internally and publicly
+record its lifecycle state
+protect one order per logical request
+record creation and latest-update times
+```
+
+### `order_items`
+
+```text
+id          primary key
+order_id    not null, foreign key -> orders.id, on delete cascade
+product_id  not null, foreign key -> inventory_products.id, on delete restrict
+quantity    not null, check quantity > 0
+unique      (order_id, product_id)
+```
+
+Responsibilities:
+
+```text
+connect one order to one product
+record the quantity requested in that order
+preserve relational integrity
+```
+
+Relationship summary:
+
+```text
+orders             one -> many order_items
+inventory_products one -> many order_items
+
+orders and inventory_products are many-to-many through order_items
+```
+
+Deletion and lifecycle summary:
+
+```text
+physically delete order
+  -> cascade-delete its order_items
+
+cancel order
+  -> retain order and items, restore inventory transactionally
+
+delete historically referenced product
+  -> reject deletion
+
+disable product
+  -> retain row and history, reject new sales
+```
+
+Next topic:
+
+```text
+Derive indexes from actual lookup and query paths.
+```
