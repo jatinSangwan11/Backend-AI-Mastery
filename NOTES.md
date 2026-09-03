@@ -4319,3 +4319,266 @@ Next database-design pressure:
 Derive the orders table and decide how PostgreSQL should protect
 order identity, lifecycle status, idempotency, and timestamps.
 ```
+
+## Project 04 DB Design 03: Designing The Orders Table From Business Rules
+
+This section records the complete reasoning used to derive the first version of the `orders` table. It is intentionally detailed because this is the first database-design project.
+
+### What one row represents
+
+One row in `orders` represents one successfully created order.
+
+Information belonging to the overall order includes:
+
+```text
+identity
+lifecycle status
+idempotency key
+creation time
+last-update time
+```
+
+The products and requested quantities do not live directly in this row. They are represented by related `order_items` rows.
+
+### Internal identity versus public order identity
+
+Two identifiers were chosen:
+
+```text
+id           = internal database identity
+order_number = public business identity
+```
+
+Example:
+
+```text
+id = 1
+order_number = ORD-2026-000001
+```
+
+`orders.id` is the primary key. Related tables use it as their foreign key:
+
+```text
+order_items.order_id -> orders.id
+```
+
+`order_number` is used by callers, APIs, customers, and support staff:
+
+```text
+GET /orders/ORD-2026-000001
+```
+
+It must be both `UNIQUE` and `NOT NULL` so one public number identifies at most one order and every order has one.
+
+The separation prevents database relationships from depending on business formatting. If new orders later change from:
+
+```text
+order-1
+```
+
+to:
+
+```text
+ORD-2026-000001
+```
+
+the foreign-key design remains unchanged because `order_items` still references the stable numeric `id`.
+
+### Protecting lifecycle status
+
+The current domain permits:
+
+```text
+PLACED
+CANCELLED
+```
+
+PostgreSQL must reject missing or invalid values such as:
+
+```text
+PLACEDD
+UNKNOWN
+cancel
+```
+
+Two valid designs were discussed.
+
+PostgreSQL enum:
+
+```sql
+CREATE TYPE order_status AS ENUM ('PLACED', 'CANCELLED');
+```
+
+Then:
+
+```sql
+status order_status NOT NULL
+```
+
+Alternative text design:
+
+```sql
+status TEXT NOT NULL
+CHECK (status IN ('PLACED', 'CANCELLED'))
+```
+
+The enum gives a clear named PostgreSQL type and strong domain vocabulary. The tradeoff is that adding, renaming, or removing enum values requires a database migration. Text with a check constraint is more portable and can be easier to reshape through ordinary constraint migrations.
+
+Because this project explicitly targets PostgreSQL and currently has a small, known lifecycle, the starter design uses a PostgreSQL enum.
+
+No database default is assigned to `status`.
+
+Reason:
+
+```text
+OrderService decides that the completed business workflow creates a PLACED order.
+PostgreSQL validates that the supplied state is present and allowed.
+```
+
+If the application forgets to provide a status, the insert should fail instead of silently creating a placed order.
+
+This preserves the boundary:
+
+```text
+business service = chooses business state
+database          = protects stored-state validity
+```
+
+### Enforcing idempotency
+
+Every successfully created order stores the caller-provided logical request identity:
+
+```sql
+idempotency_key ... UNIQUE NOT NULL
+```
+
+The two constraints solve different problems:
+
+```text
+NOT NULL
+  -> no successful order can omit its idempotency identity
+
+UNIQUE
+  -> no two orders can represent the same logical request
+```
+
+The unique constraint also closes a concurrency gap that application-only lookup cannot close safely:
+
+```text
+Request A checks key -> missing
+Request B checks key -> missing
+Request A inserts
+Request B inserts
+```
+
+Without database enforcement, both requests might create orders. With the unique constraint, PostgreSQL allows only one persisted row for that key. The application must later handle the losing insert appropriately within the transaction workflow.
+
+### Choosing the authority for creation time
+
+Application code could generate a UTC timestamp, but different backend machines can have slightly different clocks.
+
+For the time at which the database record was created, PostgreSQL is the chosen authority:
+
+```sql
+created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+```
+
+Meaning:
+
+```text
+TIMESTAMPTZ
+  -> stores a timezone-aware point in time
+
+NOT NULL
+  -> every order has a creation time
+
+DEFAULT now()
+  -> PostgreSQL supplies the time when the application omits it
+```
+
+The timestamp can later be displayed in the user's local timezone.
+
+This does not mean PostgreSQL must generate every possible business timestamp. A time supplied by an external event may have different semantics. Here, `created_at` specifically represents creation of the persisted order record.
+
+### Recording later changes
+
+The current design also includes:
+
+```sql
+updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+```
+
+Initially, `created_at` and `updated_at` have the same value.
+
+Important PostgreSQL behavior:
+
+```text
+DEFAULT now() runs for insertion.
+It does not automatically update the column on every UPDATE.
+```
+
+When order status changes, the starter repository/update statement must explicitly do:
+
+```sql
+updated_at = now()
+```
+
+A database trigger could automate this later, but explicit repository behavior is simpler and more visible for the current learning stage.
+
+Semantic distinction:
+
+```text
+updated_at
+  -> time of any latest change to the order row
+
+status_updated_at
+  -> time of the latest status transition specifically
+
+cancelled_at
+  -> time of cancellation specifically
+```
+
+The current project uses general `updated_at` because status is presently the main mutable order field. More specific lifecycle timestamps should be introduced only when their requirement appears.
+
+### Current derived orders table
+
+```text
+orders
+----------------------------------------------
+id               primary key
+order_number     unique, not null
+status           order_status, not null, no default
+idempotency_key  unique, not null
+created_at       timestamptz, not null, default now()
+updated_at       timestamptz, not null, default now()
+```
+
+Every field came from a requirement:
+
+```text
+id
+  -> stable relational identity
+
+order_number
+  -> unique public identity
+
+status
+  -> valid lifecycle state explicitly chosen by business logic
+
+idempotency_key
+  -> one stored order per logical request
+
+created_at
+  -> authoritative record-creation time
+
+updated_at
+  -> latest row-change time
+```
+
+Next database-design question:
+
+```text
+If an orders row is deleted, what should PostgreSQL do with its order_items rows?
+```
+
+This introduces foreign-key deletion behavior such as `CASCADE` and `RESTRICT`.

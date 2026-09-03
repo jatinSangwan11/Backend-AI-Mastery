@@ -1314,3 +1314,44 @@ Resume point:
 
 - Continue deriving the `orders` table itself.
 - Decide its primary key strategy, status constraint, idempotency-key uniqueness, timestamps, and any lifecycle fields before writing PostgreSQL or ORM code.
+
+Same-day continuation — first database design: deriving the `orders` table:
+
+- Separated internal database identity from public business identity:
+  - `id` is the stable primary key used by foreign keys such as `order_items.order_id`
+  - `order_number` is the unique caller-facing identifier used by APIs, customers, and support workflows
+- This allows the public order-number format to evolve without coupling database relationships to that format.
+- Added a database-protected order status:
+  - current allowed states are `PLACED` and `CANCELLED`
+  - discussed PostgreSQL enum versus `TEXT` with a `CHECK` constraint
+  - selected a PostgreSQL `order_status` enum for the current PostgreSQL-specific design
+- Kept `status` as `NOT NULL` with no default.
+- Reason: `OrderService` must explicitly decide when the business workflow has produced a placed order; PostgreSQL should validate the state rather than silently choose it.
+- Added `idempotency_key` as `UNIQUE NOT NULL`:
+  - `NOT NULL` ensures every successful order records its logical request identity
+  - `UNIQUE` prevents two persisted orders from representing the same request, including competing concurrent inserts
+- Chose PostgreSQL as the authority for record-creation time:
+  - `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`
+  - avoids relying on clocks from different application instances
+- Added `updated_at TIMESTAMPTZ NOT NULL DEFAULT now()` for the most recent row change.
+- Clarified that `DEFAULT now()` only handles insertion; PostgreSQL does not automatically refresh `updated_at` on updates.
+- Current starter choice: the repository/update statement explicitly sets `updated_at = now()` when changing order state.
+- Clarified that `updated_at` means any row update, not necessarily only a status change. A future `status_updated_at` or `cancelled_at` would communicate more specific lifecycle meaning if required.
+
+Current `orders` table design:
+
+```text
+orders
+----------------------------------------------
+id               primary key
+order_number     unique, not null
+status           order_status, not null, no default
+idempotency_key  unique, not null
+created_at       timestamptz, not null, default now()
+updated_at       timestamptz, not null, default now()
+```
+
+Updated resume point:
+
+- Decide foreign-key deletion behavior between `orders`, `order_items`, and `inventory_products`.
+- Begin with what should happen to an order's item rows if the parent order is deleted.
