@@ -1226,3 +1226,321 @@ Resume point:
 
 - Idempotency basics are complete.
 - Continue into database design for Project 04.
+
+## 2026-09-04
+
+Started the database-design stage of Phase 2, Project 04 on branch:
+
+```text
+DB-design
+```
+
+Database-design starting rule:
+
+- Do not mechanically turn every Python class into a table.
+- First ask which business information must survive an application restart.
+- Then identify the records, identities, relationships, and invariants PostgreSQL must protect.
+
+First persistent concept: inventory products.
+
+- Distinguished the inventory collection from one `InventoryProduct`:
+  - inventory is the collection of stocked products
+  - `InventoryProduct` describes one individual stocked product
+- A separate `inventories` table is not required yet because the current requirements have only one inventory and no warehouse, seller, or location distinction.
+- Information that must persist for each stocked product:
+  - SKU
+  - product name
+  - category
+  - available quantity
+- Chose SKU as the meaningful business identifier because names can change or be duplicated.
+- Chose a separate generated database `id` as the stable primary key while keeping SKU unique.
+- Reason: related tables can reference the stable internal id even if the business later changes a SKU.
+- PostgreSQL must independently protect the quantity invariant with `CHECK (quantity >= 0)`.
+
+Current inventory-product table shape:
+
+```text
+inventory_products
+------------------
+id            primary key
+sku           unique, not null
+product_name  not null
+category      nullable
+quantity      not null, check quantity >= 0
+```
+
+Order persistence discussion:
+
+- Identified order information that must survive restart:
+  - order id
+  - status
+  - idempotency key
+  - creation timestamp
+  - ordered products and their requested quantities
+- Added `created_at` to the database-design requirements for history, ordering, operational queries, and possible idempotency-expiration decisions.
+
+Order-items storage pressure:
+
+- Python can naturally represent `Order.items` as `list[UserOrder]`.
+- PostgreSQL can technically store nested items using JSON or arrays, but that is not the chosen design here.
+- Product references and item quantities hidden inside one nested column make normal relational protection and operations harder:
+  - foreign keys cannot cleanly protect every embedded product id
+  - `CHECK (quantity > 0)` cannot be applied as a simple column constraint to every nested item
+  - product-based queries and aggregation become more specialized
+  - updating one order item becomes more awkward
+- The list is therefore persisted as multiple `order_items` rows and reconstructed as a Python list by the repository/ORM.
+
+Current relationship design:
+
+```text
+orders             one -> many       order_items
+inventory_products one -> many       order_items
+```
+
+Each `order_items` row contains:
+
+```text
+id          primary key
+order_id    foreign key -> orders.id
+product_id  foreign key -> inventory_products.id
+quantity    not null, check quantity > 0
+```
+
+Proposed protection:
+
+- `UNIQUE (order_id, product_id)` prevents the same product from appearing as duplicate lines in one order under the current business model.
+
+Resume point:
+
+- Continue deriving the `orders` table itself.
+- Decide its primary key strategy, status constraint, idempotency-key uniqueness, timestamps, and any lifecycle fields before writing PostgreSQL or ORM code.
+
+Same-day continuation — first database design: deriving the `orders` table:
+
+- Separated internal database identity from public business identity:
+  - `id` is the stable primary key used by foreign keys such as `order_items.order_id`
+  - `order_number` is the unique caller-facing identifier used by APIs, customers, and support workflows
+- This allows the public order-number format to evolve without coupling database relationships to that format.
+- Added a database-protected order status:
+  - current allowed states are `PLACED` and `CANCELLED`
+  - discussed PostgreSQL enum versus `TEXT` with a `CHECK` constraint
+  - selected a PostgreSQL `order_status` enum for the current PostgreSQL-specific design
+- Kept `status` as `NOT NULL` with no default.
+- Reason: `OrderService` must explicitly decide when the business workflow has produced a placed order; PostgreSQL should validate the state rather than silently choose it.
+- Added `idempotency_key` as `UNIQUE NOT NULL`:
+  - `NOT NULL` ensures every successful order records its logical request identity
+  - `UNIQUE` prevents two persisted orders from representing the same request, including competing concurrent inserts
+- Chose PostgreSQL as the authority for record-creation time:
+  - `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`
+  - avoids relying on clocks from different application instances
+- Added `updated_at TIMESTAMPTZ NOT NULL DEFAULT now()` for the most recent row change.
+- Clarified that `DEFAULT now()` only handles insertion; PostgreSQL does not automatically refresh `updated_at` on updates.
+- Current starter choice: the repository/update statement explicitly sets `updated_at = now()` when changing order state.
+- Clarified that `updated_at` means any row update, not necessarily only a status change. A future `status_updated_at` or `cancelled_at` would communicate more specific lifecycle meaning if required.
+
+Current `orders` table design:
+
+```text
+orders
+----------------------------------------------
+id               primary key
+order_number     unique, not null
+status           order_status, not null, no default
+idempotency_key  unique, not null
+created_at       timestamptz, not null, default now()
+updated_at       timestamptz, not null, default now()
+```
+
+Updated resume point:
+
+- Decide foreign-key deletion behavior between `orders`, `order_items`, and `inventory_products`.
+- Begin with what should happen to an order's item rows if the parent order is deleted.
+
+Same-day continuation — deletion, cancellation, and product availability:
+
+- Identified the orphan-row pressure:
+  - deleting an order while leaving its `order_items` would leave item rows pointing to a missing parent
+- Selected `ON DELETE CASCADE` for `order_items.order_id -> orders.id`:
+  - if an order is physically deleted, its dependent item rows are automatically deleted
+- Distinguished physical deletion from business cancellation:
+  - deletion removes the order and cascades to its items
+  - cancellation retains the order and its items as history, changes status to `CANCELLED`, restores inventory, and updates `updated_at`
+- Cancellation remains a single transaction boundary:
+  - restore inventory
+  - change order status
+  - update timestamp
+  - commit or roll back together
+- A separate status on each order item is unnecessary while the system only supports whole-order cancellation.
+- Item-level state becomes relevant only for partial cancellation, fulfilment, returns, or backorders.
+- Selected restrictive deletion for `order_items.product_id -> inventory_products.id`:
+  - PostgreSQL must reject physical deletion of products referenced by historical order items
+  - deleting a product must not cascade into and erase order history
+- Distinguished stock from sellability:
+  - `quantity = 0` means currently out of stock and possibly restockable
+  - `is_active = false` means intentionally unavailable/discontinued even if physical stock remains
+- Added `is_active BOOLEAN NOT NULL DEFAULT true` to `inventory_products`.
+- New order placement must require both:
+  - product is active
+  - sufficient quantity is available
+
+Current database tables:
+
+```text
+inventory_products
+------------------
+id            primary key
+sku           unique, not null
+product_name  not null
+category      nullable
+quantity      not null, check quantity >= 0
+is_active     boolean, not null, default true
+
+orders
+----------------------------------------------
+id               primary key
+order_number     unique, not null
+status           order_status, not null, no default
+idempotency_key  unique, not null
+created_at       timestamptz, not null, default now()
+updated_at       timestamptz, not null, default now()
+
+order_items
+----------------------------------------------
+id          primary key
+order_id    foreign key -> orders.id, on delete cascade
+product_id  foreign key -> inventory_products.id, delete restricted
+quantity    not null, check quantity > 0
+unique      (order_id, product_id)
+```
+
+Updated resume point:
+
+- Move to database indexes and derive them from actual lookup/query paths.
+
+Same-day continuation — index fundamentals and composite uniqueness:
+
+- Introduced an index as an additional database structure that helps PostgreSQL locate rows without scanning the entire table.
+- Discussed PostgreSQL's default B-tree index:
+  - unlike a binary search tree, one node/page can contain many keys and have many children
+  - its wide, balanced shape reduces expensive storage-page reads
+  - ordered entries support equality, range, and sorting operations
+- Clarified the index tradeoff:
+  - indexes speed up suitable reads
+  - indexes consume storage and add maintenance work to inserts, updates, and deletes
+- Indexes should be derived from real query paths rather than added to every column.
+- PostgreSQL automatically creates indexes for primary-key and unique constraints.
+- PostgreSQL does not automatically create an index on the referencing side of every foreign key.
+- Confirmed the `order_items` business rule:
+  - one product appears only once within a particular order
+  - repeated quantities for the same product should be combined into one order-item row
+- Protected this with the composite unique constraint:
+
+```sql
+UNIQUE (order_id, product_id)
+```
+
+- Clarified that this means the pair is unique:
+  - `order_id` may repeat across different products
+  - `product_id` may repeat across different orders
+  - the same `(order_id, product_id)` combination may not repeat
+- Kept `id` as the single-column primary key; the pair is an additional composite unique constraint, not the primary key.
+- PostgreSQL creates one composite unique index on `(order_id, product_id)` to enforce the constraint; it does not create separate indexes on both columns.
+- Because `order_id` is the leftmost index column, this index can also support loading all items for one order.
+- Walked through execution of:
+
+```sql
+SELECT quantity
+FROM order_items
+WHERE order_id = 101
+  AND product_id = 42;
+```
+
+- PostgreSQL parses the query, compares possible plans, may search the composite B-tree for `(101, 42)`, follows the index's tuple reference to the table heap, reads `quantity`, and returns it.
+- The current index contains `order_id` and `product_id`, not `quantity`; an ordinary index scan therefore reads the final value from the table row.
+- An `INCLUDE (quantity)` covering index could sometimes allow an index-only scan, but it is intentionally not added without a demonstrated query/performance need.
+- PostgreSQL may still choose a sequential scan for a very small table when its cost estimator considers that cheaper.
+
+Updated resume point:
+
+- Determine whether querying historical order items by `product_id` needs its own index.
+- Explain why the existing `(order_id, product_id)` index is not generally efficient for a `product_id`-only lookup.
+
+Same-day continuation — non-unique indexes, selectivity, and recent-order queries:
+
+- Clarified that indexing and uniqueness are separate concepts:
+  - a unique index locates at most one matching key
+  - an ordinary non-unique index groups and locates multiple matching entries
+- `inventory_products.id` uniquely identifies one product.
+- `order_items.product_id` is intentionally repeatable because the same product can appear in many different orders.
+- Added the design decision for an ordinary index on `order_items.product_id` because product-based history and sales queries are realistic requirements:
+
+```sql
+CREATE INDEX idx_order_items_product_id
+ON order_items(product_id);
+```
+
+- Querying a repeated indexed value is approximately:
+  - B-tree navigation to the first match: `O(log n)`
+  - reading all `k` matching entries: `O(k)`
+  - combined conceptual cost: `O(log n + k)`
+- This is not a linear scan over the entire table, although PostgreSQL must process every matching result requested.
+- Introduced selectivity:
+  - a condition matching few rows has high selectivity and often benefits from an index
+  - a condition matching most rows has low selectivity and may make a sequential scan cheaper
+- Confirmed a realistic recent-orders query for an admin dashboard or order-history API.
+- Added deterministic ordering using creation time plus internal id as a tie-breaker:
+
+```sql
+SELECT *
+FROM orders
+ORDER BY created_at DESC, id DESC
+LIMIT 20;
+```
+
+- Selected one composite index instead of overlapping single and composite indexes:
+
+```sql
+CREATE INDEX idx_orders_created_at_id
+ON orders(created_at, id);
+```
+
+- A PostgreSQL B-tree can be scanned backward for descending results.
+- The `id` tie-breaker produces stable ordering when multiple orders have the same `created_at` and prepares the query shape for later cursor pagination.
+
+Current index design:
+
+```text
+inventory_products.id
+  -> primary-key index
+
+inventory_products.sku
+  -> unique index
+
+orders.id
+  -> primary-key index
+
+orders.order_number
+  -> unique index
+
+orders.idempotency_key
+  -> unique index
+
+orders(created_at, id)
+  -> ordinary composite index for deterministic recent-order listing
+
+order_items.id
+  -> primary-key index
+
+order_items(order_id, product_id)
+  -> composite unique index
+  -> protects one product line per order
+  -> supports loading items by order_id
+
+order_items.product_id
+  -> ordinary non-unique index for product-based order history
+```
+
+Updated resume point:
+
+- Index fundamentals for the current schema are complete.
+- Next topic: design the PostgreSQL transaction for order placement, then handle concurrent attempts to purchase the final available units.
