@@ -26,11 +26,11 @@ def test_place_order_returns_order_result_when_stock_is_available():
     unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
     order_service = OrderService(inventory_service, unit_of_work)
 
-    result = order_service.place_order([UserOrder("iphone", 3)])
+    result = order_service.place_order([UserOrder("iphone", 3)], "request-1")
 
     assert result == OrderRecord(True, "Order placed", "order-1")
     assert order_repository.orders == [
-        Order("order-1", [UserOrder("iphone", 3)], OrderStatus.PLACED),
+        Order("order-1", [UserOrder("iphone", 3)], OrderStatus.PLACED, "request-1"),
     ]
     assert inventory["iphone"].quantity == 2
     assert inventory["iphone"].sku == "IPHONE-15"
@@ -47,12 +47,13 @@ def test_get_order_returns_placed_order_by_order_id():
     unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
     order_service = OrderService(inventory_service, unit_of_work)
 
-    result = order_service.place_order([UserOrder("iphone", 3)])
+    result = order_service.place_order([UserOrder("iphone", 3)], "request-1")
 
     assert order_service.get_order(result.order_id) == Order(
         "order-1",
         [UserOrder("iphone", 3)],
         OrderStatus.PLACED,
+        "request-1",
     )
 
 
@@ -79,7 +80,7 @@ def test_cancel_order_changes_placed_order_status_to_cancelled():
     unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
     order_service = OrderService(inventory_service, unit_of_work)
 
-    result = order_service.place_order([UserOrder("iphone", 3)])
+    result = order_service.place_order([UserOrder("iphone", 3)], "request-1")
     cancel_result = order_service.cancel_order(result.order_id)
 
     assert cancel_result == OrderRecord(True, "Order cancelled", "order-1")
@@ -87,6 +88,7 @@ def test_cancel_order_changes_placed_order_status_to_cancelled():
         "order-1",
         [UserOrder("iphone", 3)],
         OrderStatus.CANCELLED,
+        "request-1",
     )
     assert inventory["iphone"].quantity == 5
 
@@ -118,7 +120,7 @@ def test_cancel_order_returns_failure_when_order_is_already_cancelled():
     unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
     order_service = OrderService(inventory_service, unit_of_work)
 
-    result = order_service.place_order([UserOrder("iphone", 3)])
+    result = order_service.place_order([UserOrder("iphone", 3)], "request-1")
     order_service.cancel_order(result.order_id)
     second_cancel_result = order_service.cancel_order(result.order_id)
 
@@ -140,7 +142,7 @@ def test_place_order_returns_failure_when_stock_is_not_available():
     unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
     order_service = OrderService(inventory_service, unit_of_work)
 
-    result = order_service.place_order([UserOrder("iphone", 7)])
+    result = order_service.place_order([UserOrder("iphone", 7)], "request-1")
 
     assert result == OrderRecord(False, "Only 5 units available", None)
     assert inventory["iphone"].quantity == 5
@@ -156,7 +158,7 @@ def test_place_order_returns_failure_when_product_does_not_exist():
     unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
     order_service = OrderService(inventory_service, unit_of_work)
 
-    result = order_service.place_order([UserOrder("airpods", 1)])
+    result = order_service.place_order([UserOrder("airpods", 1)], "request-1")
 
     assert result == OrderRecord(False, "Product not found", None)
     assert inventory == {
@@ -178,7 +180,7 @@ def test_place_order_restores_inventory_when_order_save_fails():
     unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
     order_service = OrderService(inventory_service, unit_of_work)
 
-    result = order_service.place_order([UserOrder("iphone", 3)])
+    result = order_service.place_order([UserOrder("iphone", 3)], "request-1")
 
     assert result == OrderRecord(False, "Order placement failed", None)
     assert inventory == {
@@ -205,7 +207,7 @@ def test_place_order_returns_critical_failure_when_unit_of_work_rollback_fails()
     unit_of_work = FailingUnitOfWork(inventory_repository, order_repository)
     order_service = OrderService(inventory_service, unit_of_work)
 
-    result = order_service.place_order([UserOrder("iphone", 3)])
+    result = order_service.place_order([UserOrder("iphone", 3)], "request-1")
 
     assert result == OrderRecord(
         False,
@@ -231,7 +233,7 @@ def test_place_order_does_not_hide_unexpected_order_save_error():
     order_service = OrderService(inventory_service, unit_of_work)
 
     with pytest.raises(RuntimeError, match="Programming bug"):
-        order_service.place_order([UserOrder("iphone", 3)])
+        order_service.place_order([UserOrder("iphone", 3)], "request-1")
     assert inventory["iphone"].quantity == 5
 
 
@@ -251,6 +253,7 @@ def test_place_order_reduces_inventory_for_multiple_items_when_all_are_available
             UserOrder("iphone", 2),
             UserOrder("macbook", 1),
         ],
+        "request-1",
     )
 
     assert result == OrderRecord(True, "Order placed", "order-1")
@@ -276,6 +279,7 @@ def test_place_order_does_not_reduce_any_inventory_when_one_item_is_unavailable(
             UserOrder("iphone", 2),
             UserOrder("macbook", 4),
         ],
+        "request-1",
     )
 
     assert result == OrderRecord(False, "Only 3 units available", None)
@@ -301,6 +305,7 @@ def test_place_order_does_not_reduce_any_inventory_when_one_item_does_not_exist(
             UserOrder("iphone", 2),
             UserOrder("airpods", 1),
         ],
+        "request-1",
     )
 
     assert result == OrderRecord(False, "Product not found", None)
@@ -318,3 +323,83 @@ def test_inventory_product_quantity_cannot_be_negative():
 def test_user_order_quantity_should_be_greater_than_zero():
     with pytest.raises(ValueError, match="User order quantity should be greater than 0"):
         UserOrder("iphone", -2)
+
+
+def test_place_order_returns_existing_order_when_same_request_is_retried():
+    inventory = {
+        "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
+    }
+    inventory_repository = InventoryRepository(inventory)
+    inventory_service = InventoryService(inventory_repository)
+    order_repository = OrderRepository()
+    unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
+    order_service = OrderService(inventory_service, unit_of_work)
+
+    first_result = order_service.place_order(
+        [UserOrder("iphone", 2)],
+        idempotency_key="checkout-request-123",
+    )
+    retry_result = order_service.place_order(
+        [UserOrder("iphone", 2)],
+        idempotency_key="checkout-request-123",
+    )
+
+    assert first_result == OrderRecord(True, "Order placed", "order-1")
+    assert retry_result == OrderRecord(True, "Order placed", "order-1")
+    assert inventory["iphone"].quantity == 3
+    assert len(order_repository.orders) == 1
+
+
+def test_place_order_rejects_same_idempotency_key_for_different_items():
+    inventory = {
+        "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
+    }
+    inventory_repository = InventoryRepository(inventory)
+    inventory_service = InventoryService(inventory_repository)
+    order_repository = OrderRepository()
+    unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
+    order_service = OrderService(inventory_service, unit_of_work)
+
+    first_result = order_service.place_order(
+        [UserOrder("iphone", 2)],
+        idempotency_key="checkout-request-123",
+    )
+    conflicting_result = order_service.place_order(
+        [UserOrder("iphone", 3)],
+        idempotency_key="checkout-request-123",
+    )
+
+    assert first_result == OrderRecord(True, "Order placed", "order-1")
+    assert conflicting_result == OrderRecord(
+        False,
+        "Idempotency key conflict",
+        None,
+    )
+    assert inventory["iphone"].quantity == 3
+    assert len(order_repository.orders) == 1
+
+
+def test_failed_order_does_not_prevent_retry_with_same_idempotency_key():
+    inventory = {
+        "iphone": InventoryProduct("iphone", 1, "IPHONE-15", "phone"),
+    }
+    inventory_repository = InventoryRepository(inventory)
+    inventory_service = InventoryService(inventory_repository)
+    order_repository = OrderRepository()
+    unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
+    order_service = OrderService(inventory_service, unit_of_work)
+
+    failed_result = order_service.place_order(
+        [UserOrder("iphone", 2)],
+        idempotency_key="checkout-request-123",
+    )
+    inventory["iphone"] = InventoryProduct("iphone", 5, "IPHONE-15", "phone")
+    retry_result = order_service.place_order(
+        [UserOrder("iphone", 2)],
+        idempotency_key="checkout-request-123",
+    )
+
+    assert failed_result == OrderRecord(False, "Only 1 units available", None)
+    assert retry_result == OrderRecord(True, "Order placed", "order-1")
+    assert inventory["iphone"].quantity == 3
+    assert len(order_repository.orders) == 1

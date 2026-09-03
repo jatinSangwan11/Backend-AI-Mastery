@@ -130,6 +130,7 @@ class Order:
     order_id: str
     items: list[UserOrder]
     status: OrderStatus
+    idempotency_key: str
 
 
 class OrderRepositoryError(Exception):
@@ -149,6 +150,13 @@ class OrderRepository:
     def get_order(self, order_id: str) -> Order | None:
         for order in self.orders:
             if order.order_id == order_id:
+                return order
+
+        return None
+
+    def get_order_by_idempotency_key(self, idempotency_key: str) -> Order | None:
+        for order in self.orders:
+            if order.idempotency_key == idempotency_key:
                 return order
 
         return None
@@ -207,7 +215,17 @@ class OrderService:
         self.inventory_service = inventory_service
         self.unit_of_work = unit_of_work
 
-    def place_order(self, order_list: list[UserOrder]) -> OrderRecord:
+    def place_order(self, order_list: list[UserOrder], idempotency_key: str) -> OrderRecord:
+        existing_order = self.unit_of_work.order_repository.get_order_by_idempotency_key(
+            idempotency_key,
+        )
+
+        if existing_order is not None:
+            if existing_order.items != order_list:
+                return OrderRecord(False, "Idempotency key conflict", None)
+
+            return OrderRecord(True, "Order placed", existing_order.order_id)
+
         self.unit_of_work.begin()
         inventory_result = self.inventory_service.reduce_stock_for_order(order_list)
 
@@ -217,7 +235,7 @@ class OrderService:
 
         try:
             order_id = self.unit_of_work.order_repository.next_order_id()
-            order = Order(order_id, order_list, OrderStatus.PLACED)
+            order = Order(order_id, order_list, OrderStatus.PLACED, idempotency_key)
             self.unit_of_work.order_repository.save(order)
         except OrderRepositoryError:
             try:
