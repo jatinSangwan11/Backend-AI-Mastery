@@ -4853,3 +4853,471 @@ Next topic:
 ```text
 Derive indexes from actual lookup and query paths.
 ```
+
+## Project 04 DB Design 06: Index Fundamentals And B-Trees
+
+An index is an additional database structure that helps PostgreSQL locate rows without examining every row in the table.
+
+Without an index, a lookup may require a sequential scan:
+
+```text
+check row 1
+check row 2
+check row 3
+...
+```
+
+The work grows with the number of rows.
+
+An index is similar to a book index:
+
+```text
+Idempotency -> page 184
+Repository  -> page 91
+Transaction -> page 143
+```
+
+The reader searches the organized index and follows its reference instead of reading the entire book.
+
+PostgreSQL's default general-purpose index type is called a B-tree. It is related to an ordered binary search tree but is not binary.
+
+```text
+Binary search tree
+  -> one key per node in the simple model
+  -> at most two children
+
+B-tree
+  -> many keys per node/page
+  -> many children
+  -> balanced and shallow
+```
+
+Databases favor this wide structure because reading another storage page is relatively expensive. Comparing many keys already loaded in one page is generally cheaper than traversing many separate pages.
+
+B-tree ordering supports operations such as:
+
+```sql
+WHERE sku = 'IPHONE-15'
+WHERE created_at >= some_time
+WHERE price BETWEEN 100 AND 500
+ORDER BY created_at
+```
+
+### Index tradeoff
+
+Indexes are not free.
+
+They consume:
+
+```text
+disk space
+memory when cached
+maintenance during INSERT
+maintenance during UPDATE
+maintenance during DELETE
+```
+
+An index should be justified by an actual query, join, sort, or uniqueness rule. It should not be added merely because a column exists.
+
+Useful questions are:
+
+```text
+Which queries run frequently?
+Which columns appear in WHERE?
+Which columns participate in JOIN?
+Which columns are used for sorting?
+Which uniqueness rule must PostgreSQL enforce?
+Does an existing index already cover the lookup?
+```
+
+PostgreSQL automatically creates an index for:
+
+```text
+PRIMARY KEY constraints
+UNIQUE constraints
+```
+
+It does not automatically create an index on the referencing column for every foreign key. For example, `orders.id` is indexed as the referenced primary key, but that alone does not index `order_items.order_id`.
+
+## Project 04 DB Design 07: Composite Unique Constraint And Query Execution
+
+The current order-item rule is:
+
+```text
+Within one order, one product should appear in one row
+with its total requested quantity.
+```
+
+Instead of storing:
+
+```text
+order_id   product_id   quantity
+101        42           2
+101        42           3
+```
+
+the application should combine the quantity:
+
+```text
+order_id   product_id   quantity
+101        42           5
+```
+
+PostgreSQL protects this with:
+
+```sql
+UNIQUE (order_id, product_id)
+```
+
+This does not make each column independently unique.
+
+Allowed combinations:
+
+```text
+(101, 42)
+(101, 81)
+(102, 42)
+```
+
+Rejected combination:
+
+```text
+(101, 42)
+(101, 42)
+```
+
+The same order can contain different products, and the same product can belong to different orders. Only the combined pair must not repeat.
+
+### Precise key terminology
+
+The current design uses:
+
+```text
+id
+  -> single-column primary key
+
+UNIQUE(order_id, product_id)
+  -> composite unique constraint
+```
+
+A composite constraint or index contains more than one column.
+
+This pair is not the table's primary key because `id` remains the primary key. PostgreSQL creates one composite unique index on `(order_id, product_id)` to enforce the additional uniqueness rule.
+
+It does not automatically create both of these independent indexes:
+
+```text
+(order_id)
+(product_id)
+```
+
+### Leftmost-column behavior
+
+The composite index is organized first by `order_id` and then by `product_id`:
+
+```text
+order_id   product_id
+101        10
+101        42
+101        81
+102        42
+103        81
+```
+
+It can efficiently support:
+
+```sql
+WHERE order_id = 101
+```
+
+and:
+
+```sql
+WHERE order_id = 101
+  AND product_id = 42
+```
+
+Because all entries for an `order_id` are grouped together, the composite unique index already supports loading an order's items. A duplicate standalone `order_items(order_id)` index is not currently needed.
+
+The same index is not generally efficient for this lookup:
+
+```sql
+WHERE product_id = 42
+```
+
+because `product_id` is not the leftmost column and its values are scattered across different order groups.
+
+### How the quantity query runs
+
+Example query:
+
+```sql
+SELECT quantity
+FROM order_items
+WHERE order_id = 101
+  AND product_id = 42;
+```
+
+Simplified PostgreSQL flow:
+
+```text
+1. Parse and validate the SQL.
+2. Plan possible execution strategies.
+3. Compare estimated sequential-scan and index-scan costs.
+4. If selected, search the composite B-tree for (101, 42).
+5. Obtain the stored reference to the matching table tuple.
+6. Read quantity from the actual table row.
+7. Return the value.
+```
+
+The index conceptually holds:
+
+```text
+(order_id, product_id) -> table-row location
+```
+
+It does not currently hold `quantity`. Therefore, a normal index scan locates the row through the index and then reads the requested quantity from the table heap.
+
+A covering index could include the value:
+
+```sql
+CREATE INDEX some_index
+ON order_items(order_id, product_id)
+INCLUDE (quantity);
+```
+
+This can sometimes support an index-only scan, subject to PostgreSQL visibility rules. It is not part of the current design because extra index data adds storage and write cost, and no performance evidence currently justifies it.
+
+PostgreSQL is also not forced to use an available index. For a tiny table, the planner may determine that scanning a few rows costs less than traversing the index. `EXPLAIN` shows the chosen plan:
+
+```sql
+EXPLAIN
+SELECT quantity
+FROM order_items
+WHERE order_id = 101
+  AND product_id = 42;
+```
+
+Key takeaway:
+
+```text
+UNIQUE(order_id, product_id)
+  -> protects one product line per order
+  -> creates one composite unique index
+  -> supports order_id-only and order_id-plus-product_id lookups
+  -> locates the row from which quantity can be read
+```
+
+Next index pressure:
+
+```text
+Do we need to find all historical order items for one product?
+If yes, the product_id-only lookup may need its own index.
+```
+
+## Project 04 DB Design 08: Non-Unique Product Lookup And Selectivity
+
+The existing composite unique index is organized as:
+
+```text
+(order_id, product_id)
+```
+
+It supports queries beginning with `order_id`, but it is not generally efficient for:
+
+```sql
+SELECT *
+FROM order_items
+WHERE product_id = 42;
+```
+
+`product_id` values are scattered across different `order_id` groups because it is the second index column.
+
+Product-based queries are realistic requirements:
+
+```text
+Which orders contained this product?
+How many units of this product have been ordered?
+Is this product referenced by historical orders?
+Which customers purchased this product once customers exist?
+```
+
+The design therefore adds an independent ordinary index:
+
+```sql
+CREATE INDEX idx_order_items_product_id
+ON order_items(product_id);
+```
+
+This index is not unique. The same product is expected to appear in many order-item rows.
+
+Important distinction:
+
+```text
+inventory_products.id
+  -> uniquely identifies one product
+
+order_items.product_id
+  -> repeats as a foreign-key reference across many orders
+
+INDEX(product_id)
+  -> makes matching references easier to locate
+  -> does not make the values unique
+```
+
+Conceptual index entries:
+
+```text
+product_id   table-row location
+42           row A
+42           row C
+42           row F
+81           row B
+```
+
+For `product_id = 42`, PostgreSQL can navigate the B-tree to the beginning of the `42` group and then read the matching entries.
+
+Conceptual cost:
+
+```text
+O(log n) to locate the beginning
++ O(k) to process k matching entries
+= O(log n + k)
+```
+
+It avoids a linear scan of all `n` rows, but it must still process all `k` rows requested by the query.
+
+### Selectivity
+
+Selectivity describes how narrowly a condition filters the table.
+
+```text
+High selectivity
+  -> matches relatively few rows
+  -> an index is often valuable
+
+Low selectivity
+  -> matches a large percentage of rows
+  -> a sequential scan may be cheaper
+```
+
+Example:
+
+```text
+1,000,000 total order-item rows
+100 reference product 42
+-> index is likely useful
+
+1,000,000 total order-item rows
+800,000 reference product 42
+-> PostgreSQL may prefer a sequential scan
+```
+
+The query planner chooses based on estimated cost; creating an index does not force every query to use it.
+
+## Project 04 DB Design 09: Recent Orders And Deterministic Ordering
+
+A realistic admin dashboard or order-history query is:
+
+```sql
+SELECT *
+FROM orders
+ORDER BY created_at DESC
+LIMIT 20;
+```
+
+An index on creation time lets PostgreSQL begin near the newest end of the B-tree and stop after obtaining the requested rows. A B-tree created with normal ascending order can generally be scanned backward for descending results.
+
+However, multiple orders can have the same `created_at`. Ordering only by time does not give those tied rows a deterministic relative order.
+
+The query therefore uses internal `id` as a stable tie-breaker:
+
+```sql
+SELECT *
+FROM orders
+ORDER BY created_at DESC, id DESC
+LIMIT 20;
+```
+
+Matching index:
+
+```sql
+CREATE INDEX idx_orders_created_at_id
+ON orders(created_at, id);
+```
+
+This provides:
+
+```text
+created_at
+  -> primary chronological ordering
+
+id
+  -> deterministic ordering among identical timestamps
+```
+
+The shape is also suitable groundwork for cursor-based pagination later.
+
+Because the composite index begins with `created_at`, a separate overlapping `orders(created_at)` index is not currently added.
+
+## Project 04 DB Design: Current Index Revision Sheet
+
+Indexes automatically created by constraints:
+
+```text
+inventory_products.id
+  -> primary-key index
+
+inventory_products.sku
+  -> unique index
+
+orders.id
+  -> primary-key index
+
+orders.order_number
+  -> unique index
+
+orders.idempotency_key
+  -> unique index
+
+order_items.id
+  -> primary-key index
+
+order_items(order_id, product_id)
+  -> composite unique index
+```
+
+Explicit ordinary indexes derived from query requirements:
+
+```text
+order_items.product_id
+  -> find historical order items for one product
+
+orders(created_at, id)
+  -> list recent orders with deterministic ordering
+```
+
+Important coverage detail:
+
+```text
+UNIQUE(order_id, product_id)
+  -> already supports WHERE order_id = ...
+  -> no duplicate standalone order_items(order_id) index needed currently
+```
+
+Index-design rule learned:
+
+```text
+Start from a real query or constraint.
+Check whether an existing index already supports it.
+Add the smallest useful index.
+Avoid overlapping indexes without measured need.
+Remember that reads become faster at the cost of storage and write maintenance.
+```
+
+Next database-design topic:
+
+```text
+Define the PostgreSQL transaction boundary for order placement
+and protect the final inventory units from concurrent buyers.
+```

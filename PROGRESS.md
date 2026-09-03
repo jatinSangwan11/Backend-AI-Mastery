@@ -1416,3 +1416,131 @@ unique      (order_id, product_id)
 Updated resume point:
 
 - Move to database indexes and derive them from actual lookup/query paths.
+
+Same-day continuation — index fundamentals and composite uniqueness:
+
+- Introduced an index as an additional database structure that helps PostgreSQL locate rows without scanning the entire table.
+- Discussed PostgreSQL's default B-tree index:
+  - unlike a binary search tree, one node/page can contain many keys and have many children
+  - its wide, balanced shape reduces expensive storage-page reads
+  - ordered entries support equality, range, and sorting operations
+- Clarified the index tradeoff:
+  - indexes speed up suitable reads
+  - indexes consume storage and add maintenance work to inserts, updates, and deletes
+- Indexes should be derived from real query paths rather than added to every column.
+- PostgreSQL automatically creates indexes for primary-key and unique constraints.
+- PostgreSQL does not automatically create an index on the referencing side of every foreign key.
+- Confirmed the `order_items` business rule:
+  - one product appears only once within a particular order
+  - repeated quantities for the same product should be combined into one order-item row
+- Protected this with the composite unique constraint:
+
+```sql
+UNIQUE (order_id, product_id)
+```
+
+- Clarified that this means the pair is unique:
+  - `order_id` may repeat across different products
+  - `product_id` may repeat across different orders
+  - the same `(order_id, product_id)` combination may not repeat
+- Kept `id` as the single-column primary key; the pair is an additional composite unique constraint, not the primary key.
+- PostgreSQL creates one composite unique index on `(order_id, product_id)` to enforce the constraint; it does not create separate indexes on both columns.
+- Because `order_id` is the leftmost index column, this index can also support loading all items for one order.
+- Walked through execution of:
+
+```sql
+SELECT quantity
+FROM order_items
+WHERE order_id = 101
+  AND product_id = 42;
+```
+
+- PostgreSQL parses the query, compares possible plans, may search the composite B-tree for `(101, 42)`, follows the index's tuple reference to the table heap, reads `quantity`, and returns it.
+- The current index contains `order_id` and `product_id`, not `quantity`; an ordinary index scan therefore reads the final value from the table row.
+- An `INCLUDE (quantity)` covering index could sometimes allow an index-only scan, but it is intentionally not added without a demonstrated query/performance need.
+- PostgreSQL may still choose a sequential scan for a very small table when its cost estimator considers that cheaper.
+
+Updated resume point:
+
+- Determine whether querying historical order items by `product_id` needs its own index.
+- Explain why the existing `(order_id, product_id)` index is not generally efficient for a `product_id`-only lookup.
+
+Same-day continuation — non-unique indexes, selectivity, and recent-order queries:
+
+- Clarified that indexing and uniqueness are separate concepts:
+  - a unique index locates at most one matching key
+  - an ordinary non-unique index groups and locates multiple matching entries
+- `inventory_products.id` uniquely identifies one product.
+- `order_items.product_id` is intentionally repeatable because the same product can appear in many different orders.
+- Added the design decision for an ordinary index on `order_items.product_id` because product-based history and sales queries are realistic requirements:
+
+```sql
+CREATE INDEX idx_order_items_product_id
+ON order_items(product_id);
+```
+
+- Querying a repeated indexed value is approximately:
+  - B-tree navigation to the first match: `O(log n)`
+  - reading all `k` matching entries: `O(k)`
+  - combined conceptual cost: `O(log n + k)`
+- This is not a linear scan over the entire table, although PostgreSQL must process every matching result requested.
+- Introduced selectivity:
+  - a condition matching few rows has high selectivity and often benefits from an index
+  - a condition matching most rows has low selectivity and may make a sequential scan cheaper
+- Confirmed a realistic recent-orders query for an admin dashboard or order-history API.
+- Added deterministic ordering using creation time plus internal id as a tie-breaker:
+
+```sql
+SELECT *
+FROM orders
+ORDER BY created_at DESC, id DESC
+LIMIT 20;
+```
+
+- Selected one composite index instead of overlapping single and composite indexes:
+
+```sql
+CREATE INDEX idx_orders_created_at_id
+ON orders(created_at, id);
+```
+
+- A PostgreSQL B-tree can be scanned backward for descending results.
+- The `id` tie-breaker produces stable ordering when multiple orders have the same `created_at` and prepares the query shape for later cursor pagination.
+
+Current index design:
+
+```text
+inventory_products.id
+  -> primary-key index
+
+inventory_products.sku
+  -> unique index
+
+orders.id
+  -> primary-key index
+
+orders.order_number
+  -> unique index
+
+orders.idempotency_key
+  -> unique index
+
+orders(created_at, id)
+  -> ordinary composite index for deterministic recent-order listing
+
+order_items.id
+  -> primary-key index
+
+order_items(order_id, product_id)
+  -> composite unique index
+  -> protects one product line per order
+  -> supports loading items by order_id
+
+order_items.product_id
+  -> ordinary non-unique index for product-based order history
+```
+
+Updated resume point:
+
+- Index fundamentals for the current schema are complete.
+- Next topic: design the PostgreSQL transaction for order placement, then handle concurrent attempts to purchase the final available units.
