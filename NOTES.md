@@ -3622,3 +3622,451 @@ service interfaces / dependency inversion basics
 idempotency basics
 module split when file pressure appears
 ```
+
+## Project 04 Bottleneck 18: Rollback Failure Still Leaves Broken State
+
+After handling order-save failure with manual rollback, we asked the next deeper question:
+
+```text
+What if rollback itself fails?
+```
+
+The dangerous flow:
+
+```text
+reduce inventory
+order save fails
+try to restore inventory
+inventory restore also fails
+```
+
+Bad final state:
+
+```text
+order was not saved
+inventory is still reduced
+```
+
+Returning a clearer failure message is useful, but it does not fix the broken state.
+
+The message:
+
+```text
+Order placement failed and inventory restore failed
+```
+
+only tells the caller/backend layer:
+
+```text
+this is not a clean business failure
+state may now need repair
+```
+
+This is the limitation of manual rollback:
+
+```text
+do step A
+do step B
+if B fails, manually undo A
+```
+
+The undo step can also fail.
+
+This pressure is what pushes the design toward a real transaction boundary.
+
+Transactional boundary:
+
+```text
+the set of operations that must succeed or fail together
+```
+
+For order placement:
+
+```text
+reduce inventory
+save order
+```
+
+These two operations belong in the same transaction boundary because one without the other breaks business correctness.
+
+With a relational database, the mental model becomes:
+
+```text
+BEGIN TRANSACTION
+
+update inventory
+insert order
+
+COMMIT
+```
+
+If anything fails:
+
+```text
+ROLLBACK
+```
+
+The database gives atomicity:
+
+```text
+both changes happen
+or neither change happens
+```
+
+Refined takeaway:
+
+```text
+Pure in-memory Python design helped reveal the pressure.
+The pressure is multi-step state consistency.
+To handle it properly in production, we need transactional storage.
+A relational DB gives us transactions and atomicity.
+```
+
+This is the bridge from LLD into DB design.
+
+## Project 04 Bottleneck 19: OrderService Owns Transaction Mechanics
+
+After rollback failure, the next pressure was inside `OrderService.place_order(...)`.
+
+The method was owning both:
+
+```text
+order placement workflow
+rollback / recovery mechanics
+```
+
+That made `OrderService` responsible for too many zones:
+
+```text
+ask inventory to reduce stock
+create order id
+create order
+save order
+decide when rollback should happen
+perform rollback
+handle rollback failure
+```
+
+The business workflow belongs in `OrderService`.
+
+The transaction boundary belongs somewhere else.
+
+Concept name:
+
+```text
+Unit of Work pattern
+```
+
+Unit of Work means:
+
+```text
+one object that tracks or coordinates a group of related changes
+and commits or rolls them back as one unit
+```
+
+In Project 04, one unit of work is:
+
+```text
+place one order
+```
+
+That unit includes:
+
+```text
+reduce inventory
+save order
+```
+
+Responsibility split:
+
+```text
+OrderService = order placement business workflow
+InventoryService = inventory business behavior
+OrderRepository = order storage access
+InventoryRepository = inventory storage access
+UnitOfWork = transaction boundary / commit / rollback mechanics
+```
+
+Why Unit of Work owns both repositories:
+
+```text
+Repository owns one storage area.
+UnitOfWork owns the transaction boundary across repositories.
+```
+
+For order placement, both storage areas must move together:
+
+```text
+inventory reduced + order saved
+```
+
+or:
+
+```text
+inventory unchanged + order not saved
+```
+
+In the current pure-Python version, `InMemoryUnitOfWork` snapshots:
+
+```text
+inventory_repository.inventory
+order_repository.orders
+```
+
+Then:
+
+```text
+begin() -> take snapshots
+commit() -> discard snapshots because changes are accepted
+rollback() -> restore repositories from snapshots
+```
+
+With a DB later, the same shape becomes:
+
+```text
+begin() -> open DB transaction/session
+commit() -> db commit
+rollback() -> db rollback
+```
+
+Important distinction:
+
+```text
+Unit of Work = application/code-level transaction owner
+DB transaction = storage-level atomicity mechanism
+```
+
+The DB transaction does not remove the Unit of Work object. Usually, the DB-backed Unit of Work controls the DB transaction.
+
+Current `except Exception` intuition:
+
+```python
+except Exception:
+    self.unit_of_work.rollback()
+    raise
+```
+
+This does not hide unexpected bugs. It restores state first, then re-raises the original error so it can surface to tests/logs/framework.
+
+Python object-reference reminder:
+
+```python
+self.inventory_repository = inventory_repository
+```
+
+stores a reference to the same repository object.
+
+And:
+
+```python
+self.inventory_repository.inventory.clear()
+```
+
+does not make the inventory `None`.
+
+It mutates the same dict object into:
+
+```python
+{}
+```
+
+Then:
+
+```python
+self.inventory_repository.inventory.update(snapshot)
+```
+
+refills the same dict object with the snapshot contents.
+
+Why not assign a new dict?
+
+```python
+self.inventory_repository.inventory = snapshot
+```
+
+Because external code/tests may still hold a reference to the original inventory dict. `clear()` + `update()` preserves the original dict object and changes its contents.
+
+## Project 04 Important Concept: Dataclass vs Protocol
+
+This distinction is important for LLD.
+
+A dataclass is for real objects that carry data.
+
+Example:
+
+```python
+@dataclass
+class Order:
+    order_id: str
+    items: list[UserOrder]
+    status: OrderStatus
+```
+
+This creates actual runtime objects:
+
+```python
+order = Order("order-1", items, OrderStatus.PLACED)
+```
+
+The dataclass gives useful generated methods such as:
+
+```text
+__init__
+__eq__
+__repr__
+```
+
+Mental model:
+
+```text
+dataclass = real object / data shape
+```
+
+A protocol describes expected behavior or shape.
+
+Example:
+
+```python
+class UnitOfWork(Protocol):
+    inventory_repository: InventoryRepository
+    order_repository: OrderRepository
+
+    def begin(self) -> None:
+        ...
+
+    def commit(self) -> None:
+        ...
+
+    def rollback(self) -> None:
+        ...
+```
+
+This says:
+
+```text
+Any object with these attributes and methods can be treated as a UnitOfWork.
+```
+
+Mental model:
+
+```text
+Protocol = behavior contract / promise
+Concrete class = actual implementation
+```
+
+In Project 04:
+
+```text
+Order = dataclass
+because it is real order data.
+
+InventoryProduct = dataclass
+because it is real inventory-product data.
+
+InMemoryUnitOfWork = concrete class
+because it actually snapshots, commits, and rolls back.
+
+UnitOfWork = Protocol
+because OrderService only needs the transaction-boundary behavior,
+not the exact implementation.
+```
+
+Key difference:
+
+```text
+Dataclass answers: what data does this object hold?
+Protocol answers: what behavior must this object provide?
+```
+
+This connects to Dependency Inversion Principle.
+
+Dependency Inversion Principle:
+
+```text
+High-level business code should not depend on low-level concrete details.
+Both should depend on abstractions/contracts.
+```
+
+In this project:
+
+```text
+OrderService = high-level business workflow
+InMemoryUnitOfWork = low-level in-memory transaction implementation
+UnitOfWork protocol = abstraction / contract
+```
+
+Old dependency:
+
+```text
+OrderService -> InMemoryUnitOfWork
+```
+
+Better dependency:
+
+```text
+OrderService -> UnitOfWork protocol
+InMemoryUnitOfWork -> satisfies UnitOfWork protocol
+```
+
+Why it is called inversion:
+
+```text
+Instead of high-level code pointing directly at a low-level implementation,
+both sides point toward a stable contract.
+```
+
+Practical payoff:
+
+```text
+Later we can introduce DatabaseUnitOfWork without changing the core idea of OrderService.
+```
+
+Runtime vs type expectation:
+
+```python
+unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
+order_service = OrderService(inventory_service, unit_of_work)
+```
+
+At runtime, we still initialize a concrete object:
+
+```text
+InMemoryUnitOfWork
+```
+
+But `OrderService` is typed against the contract:
+
+```python
+def __init__(self, inventory_service: InventoryService, unit_of_work: UnitOfWork):
+```
+
+So:
+
+```text
+runtime object = InMemoryUnitOfWork
+type/expectation = UnitOfWork protocol
+```
+
+This is abstraction.
+
+```text
+Abstraction = what behavior is needed
+Implementation = how that behavior is done
+```
+
+In Project 04:
+
+```text
+Abstraction:
+  begin()
+  commit()
+  rollback()
+  order_repository
+
+Implementation:
+  copy snapshots
+  clear/update dict
+  restore list
+```
+
+Protocol is one way to express abstraction in Python. Dependency Inversion uses this abstraction so high-level workflow code does not depend directly on low-level concrete classes.

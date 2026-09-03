@@ -1,6 +1,7 @@
 import pytest
 
 from order import (
+    InMemoryUnitOfWork,
     InventoryProduct,
     InventoryService,
     InventoryRepository,
@@ -10,6 +11,7 @@ from order import (
     OrderService,
     OrderStatus,
     OrderRepository,
+    UnitOfWorkError,
     UserOrder,
 )
 
@@ -21,7 +23,8 @@ def test_place_order_returns_order_result_when_stock_is_available():
     inventory_repository = InventoryRepository(inventory)
     inventory_service = InventoryService(inventory_repository)
     order_repository = OrderRepository()
-    order_service = OrderService(inventory_service, order_repository)
+    unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
+    order_service = OrderService(inventory_service, unit_of_work)
 
     result = order_service.place_order([UserOrder("iphone", 3)])
 
@@ -41,7 +44,8 @@ def test_get_order_returns_placed_order_by_order_id():
     inventory_repository = InventoryRepository(inventory)
     inventory_service = InventoryService(inventory_repository)
     order_repository = OrderRepository()
-    order_service = OrderService(inventory_service, order_repository)
+    unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
+    order_service = OrderService(inventory_service, unit_of_work)
 
     result = order_service.place_order([UserOrder("iphone", 3)])
 
@@ -59,7 +63,8 @@ def test_get_order_returns_none_when_order_does_not_exist():
     inventory_repository = InventoryRepository(inventory)
     inventory_service = InventoryService(inventory_repository)
     order_repository = OrderRepository()
-    order_service = OrderService(inventory_service, order_repository)
+    unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
+    order_service = OrderService(inventory_service, unit_of_work)
 
     assert order_service.get_order("missing-order") is None
 
@@ -71,7 +76,8 @@ def test_cancel_order_changes_placed_order_status_to_cancelled():
     inventory_repository = InventoryRepository(inventory)
     inventory_service = InventoryService(inventory_repository)
     order_repository = OrderRepository()
-    order_service = OrderService(inventory_service, order_repository)
+    unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
+    order_service = OrderService(inventory_service, unit_of_work)
 
     result = order_service.place_order([UserOrder("iphone", 3)])
     cancel_result = order_service.cancel_order(result.order_id)
@@ -92,7 +98,8 @@ def test_cancel_order_returns_failure_when_order_does_not_exist():
     inventory_repository = InventoryRepository(inventory)
     inventory_service = InventoryService(inventory_repository)
     order_repository = OrderRepository()
-    order_service = OrderService(inventory_service, order_repository)
+    unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
+    order_service = OrderService(inventory_service, unit_of_work)
 
     assert order_service.cancel_order("missing-order") == OrderRecord(
         False,
@@ -108,7 +115,8 @@ def test_cancel_order_returns_failure_when_order_is_already_cancelled():
     inventory_repository = InventoryRepository(inventory)
     inventory_service = InventoryService(inventory_repository)
     order_repository = OrderRepository()
-    order_service = OrderService(inventory_service, order_repository)
+    unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
+    order_service = OrderService(inventory_service, unit_of_work)
 
     result = order_service.place_order([UserOrder("iphone", 3)])
     order_service.cancel_order(result.order_id)
@@ -129,7 +137,8 @@ def test_place_order_returns_failure_when_stock_is_not_available():
     inventory_repository = InventoryRepository(inventory)
     inventory_service = InventoryService(inventory_repository)
     order_repository = OrderRepository()
-    order_service = OrderService(inventory_service, order_repository)
+    unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
+    order_service = OrderService(inventory_service, unit_of_work)
 
     result = order_service.place_order([UserOrder("iphone", 7)])
 
@@ -144,7 +153,8 @@ def test_place_order_returns_failure_when_product_does_not_exist():
     inventory_repository = InventoryRepository(inventory)
     inventory_service = InventoryService(inventory_repository)
     order_repository = OrderRepository()
-    order_service = OrderService(inventory_service, order_repository)
+    unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
+    order_service = OrderService(inventory_service, unit_of_work)
 
     result = order_service.place_order([UserOrder("airpods", 1)])
 
@@ -165,7 +175,8 @@ def test_place_order_restores_inventory_when_order_save_fails():
     inventory_repository = InventoryRepository(inventory)
     inventory_service = InventoryService(inventory_repository)
     order_repository = FailingOrderRepository()
-    order_service = OrderService(inventory_service, order_repository)
+    unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
+    order_service = OrderService(inventory_service, unit_of_work)
 
     result = order_service.place_order([UserOrder("iphone", 3)])
 
@@ -173,6 +184,35 @@ def test_place_order_restores_inventory_when_order_save_fails():
     assert inventory == {
         "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
     }
+    assert order_repository.orders == []
+
+
+def test_place_order_returns_critical_failure_when_unit_of_work_rollback_fails():
+    class FailingOrderRepository(OrderRepository):
+        def save(self, order: Order) -> None:
+            raise OrderRepositoryError("Database failed")
+
+    class FailingUnitOfWork(InMemoryUnitOfWork):
+        def rollback(self) -> None:
+            raise UnitOfWorkError("Rollback failed")
+
+    inventory = {
+        "iphone": InventoryProduct("iphone", 5, "IPHONE-15", "phone"),
+    }
+    inventory_repository = InventoryRepository(inventory)
+    inventory_service = InventoryService(inventory_repository)
+    order_repository = FailingOrderRepository()
+    unit_of_work = FailingUnitOfWork(inventory_repository, order_repository)
+    order_service = OrderService(inventory_service, unit_of_work)
+
+    result = order_service.place_order([UserOrder("iphone", 3)])
+
+    assert result == OrderRecord(
+        False,
+        "Order placement failed and rollback failed",
+        None,
+    )
+    assert inventory["iphone"].quantity == 2
     assert order_repository.orders == []
 
 
@@ -187,10 +227,12 @@ def test_place_order_does_not_hide_unexpected_order_save_error():
     inventory_repository = InventoryRepository(inventory)
     inventory_service = InventoryService(inventory_repository)
     order_repository = BrokenOrderRepository()
-    order_service = OrderService(inventory_service, order_repository)
+    unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
+    order_service = OrderService(inventory_service, unit_of_work)
 
     with pytest.raises(RuntimeError, match="Programming bug"):
         order_service.place_order([UserOrder("iphone", 3)])
+    assert inventory["iphone"].quantity == 5
 
 
 def test_place_order_reduces_inventory_for_multiple_items_when_all_are_available():
@@ -201,7 +243,8 @@ def test_place_order_reduces_inventory_for_multiple_items_when_all_are_available
     inventory_repository = InventoryRepository(inventory)
     inventory_service = InventoryService(inventory_repository)
     order_repository = OrderRepository()
-    order_service = OrderService(inventory_service, order_repository)
+    unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
+    order_service = OrderService(inventory_service, unit_of_work)
 
     result = order_service.place_order(
         [
@@ -225,7 +268,8 @@ def test_place_order_does_not_reduce_any_inventory_when_one_item_is_unavailable(
     inventory_repository = InventoryRepository(inventory)
     inventory_service = InventoryService(inventory_repository)
     order_repository = OrderRepository()
-    order_service = OrderService(inventory_service, order_repository)
+    unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
+    order_service = OrderService(inventory_service, unit_of_work)
 
     result = order_service.place_order(
         [
@@ -249,7 +293,8 @@ def test_place_order_does_not_reduce_any_inventory_when_one_item_does_not_exist(
     inventory_repository = InventoryRepository(inventory)
     inventory_service = InventoryService(inventory_repository)
     order_repository = OrderRepository()
-    order_service = OrderService(inventory_service, order_repository)
+    unit_of_work = InMemoryUnitOfWork(inventory_repository, order_repository)
+    order_service = OrderService(inventory_service, unit_of_work)
 
     result = order_service.place_order(
         [

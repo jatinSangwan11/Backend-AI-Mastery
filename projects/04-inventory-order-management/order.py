@@ -1,5 +1,7 @@
+import copy
 from dataclasses import dataclass
 from enum import Enum
+from typing import Protocol
 
 
 @dataclass
@@ -45,6 +47,10 @@ class OrderStatus(Enum):
 @dataclass
 class InventoryChangeSet:
     products: dict[str, InventoryProduct]
+
+
+class InventoryRepositoryError(Exception):
+    pass
 
 
 class InventoryRepository:
@@ -148,30 +154,90 @@ class OrderRepository:
         return None
 
 
+class UnitOfWorkError(Exception):
+    pass
+
+
+class UnitOfWork(Protocol):
+    inventory_repository: InventoryRepository
+    order_repository: OrderRepository
+
+    def begin(self) -> None:
+        ...
+
+    def commit(self) -> None:
+        ...
+
+    def rollback(self) -> None:
+        ...
+
+
+class InMemoryUnitOfWork:
+    def __init__(self, inventory_repository: InventoryRepository, order_repository: OrderRepository) -> None:
+        self.inventory_repository = inventory_repository
+        self.order_repository = order_repository
+        self._inventory_snapshot: dict[str, InventoryProduct] | None = None
+        self._orders_snapshot: list[Order] | None = None
+
+    def begin(self) -> None:
+        self._inventory_snapshot = copy.deepcopy(self.inventory_repository.inventory)
+        self._orders_snapshot = copy.deepcopy(self.order_repository.orders)
+
+    def commit(self) -> None:
+        self._inventory_snapshot = None
+        self._orders_snapshot = None
+
+    def rollback(self) -> None:
+        if self._inventory_snapshot is None or self._orders_snapshot is None:
+            return
+
+        self.inventory_repository.inventory.clear()
+        self.inventory_repository.inventory.update(copy.deepcopy(self._inventory_snapshot))
+
+        self.order_repository.orders.clear()
+        self.order_repository.orders.extend(copy.deepcopy(self._orders_snapshot))
+
+        self._inventory_snapshot = None
+        self._orders_snapshot = None
+
+
 class OrderService:
 
-    def __init__(self, inventory_service: InventoryService, order_repository: OrderRepository) -> None:
+    def __init__(self, inventory_service: InventoryService, unit_of_work: UnitOfWork) -> None:
         self.inventory_service = inventory_service
-        self.order_repository = order_repository
+        self.unit_of_work = unit_of_work
 
     def place_order(self, order_list: list[UserOrder]) -> OrderRecord:
+        self.unit_of_work.begin()
         inventory_result = self.inventory_service.reduce_stock_for_order(order_list)
 
         if not inventory_result.success:
+            self.unit_of_work.rollback()
             return OrderRecord(False, inventory_result.message, None)
 
         try:
-            order_id = self.order_repository.next_order_id()
+            order_id = self.unit_of_work.order_repository.next_order_id()
             order = Order(order_id, order_list, OrderStatus.PLACED)
-            self.order_repository.save(order)
+            self.unit_of_work.order_repository.save(order)
         except OrderRepositoryError:
-            self.inventory_service.restore_stock_for_order(order_list)
+            try:
+                self.unit_of_work.rollback()
+            except UnitOfWorkError:
+                return OrderRecord(
+                    False,
+                    "Order placement failed and rollback failed",
+                    None,
+                )
             return OrderRecord(False, "Order placement failed", None)
+        except Exception:
+            self.unit_of_work.rollback()
+            raise
 
+        self.unit_of_work.commit()
         return OrderRecord(True, "Order placed", order_id)
 
     def get_order(self, order_id: str) -> Order | None:
-        return self.order_repository.get_order(order_id)
+        return self.unit_of_work.order_repository.get_order(order_id)
 
     def cancel_order(self, order_id: str) -> OrderRecord:
         order = self.get_order(order_id)
