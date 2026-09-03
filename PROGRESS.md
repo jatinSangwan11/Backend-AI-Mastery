@@ -1226,3 +1226,91 @@ Resume point:
 
 - Idempotency basics are complete.
 - Continue into database design for Project 04.
+
+## 2026-09-04
+
+Started the database-design stage of Phase 2, Project 04 on branch:
+
+```text
+DB-design
+```
+
+Database-design starting rule:
+
+- Do not mechanically turn every Python class into a table.
+- First ask which business information must survive an application restart.
+- Then identify the records, identities, relationships, and invariants PostgreSQL must protect.
+
+First persistent concept: inventory products.
+
+- Distinguished the inventory collection from one `InventoryProduct`:
+  - inventory is the collection of stocked products
+  - `InventoryProduct` describes one individual stocked product
+- A separate `inventories` table is not required yet because the current requirements have only one inventory and no warehouse, seller, or location distinction.
+- Information that must persist for each stocked product:
+  - SKU
+  - product name
+  - category
+  - available quantity
+- Chose SKU as the meaningful business identifier because names can change or be duplicated.
+- Chose a separate generated database `id` as the stable primary key while keeping SKU unique.
+- Reason: related tables can reference the stable internal id even if the business later changes a SKU.
+- PostgreSQL must independently protect the quantity invariant with `CHECK (quantity >= 0)`.
+
+Current inventory-product table shape:
+
+```text
+inventory_products
+------------------
+id            primary key
+sku           unique, not null
+product_name  not null
+category      nullable
+quantity      not null, check quantity >= 0
+```
+
+Order persistence discussion:
+
+- Identified order information that must survive restart:
+  - order id
+  - status
+  - idempotency key
+  - creation timestamp
+  - ordered products and their requested quantities
+- Added `created_at` to the database-design requirements for history, ordering, operational queries, and possible idempotency-expiration decisions.
+
+Order-items storage pressure:
+
+- Python can naturally represent `Order.items` as `list[UserOrder]`.
+- PostgreSQL can technically store nested items using JSON or arrays, but that is not the chosen design here.
+- Product references and item quantities hidden inside one nested column make normal relational protection and operations harder:
+  - foreign keys cannot cleanly protect every embedded product id
+  - `CHECK (quantity > 0)` cannot be applied as a simple column constraint to every nested item
+  - product-based queries and aggregation become more specialized
+  - updating one order item becomes more awkward
+- The list is therefore persisted as multiple `order_items` rows and reconstructed as a Python list by the repository/ORM.
+
+Current relationship design:
+
+```text
+orders             one -> many       order_items
+inventory_products one -> many       order_items
+```
+
+Each `order_items` row contains:
+
+```text
+id          primary key
+order_id    foreign key -> orders.id
+product_id  foreign key -> inventory_products.id
+quantity    not null, check quantity > 0
+```
+
+Proposed protection:
+
+- `UNIQUE (order_id, product_id)` prevents the same product from appearing as duplicate lines in one order under the current business model.
+
+Resume point:
+
+- Continue deriving the `orders` table itself.
+- Decide its primary key strategy, status constraint, idempotency-key uniqueness, timestamps, and any lifecycle fields before writing PostgreSQL or ORM code.

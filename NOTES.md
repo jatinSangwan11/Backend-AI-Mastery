@@ -4110,3 +4110,212 @@ Implementation:
 ```
 
 Protocol is one way to express abstraction in Python. Dependency Inversion uses this abstraction so high-level workflow code does not depend directly on low-level concrete classes.
+
+## Project 04 DB Design 01: Derive Tables From Persistent Business Information
+
+Database design did not start by converting each dataclass into a table.
+
+The starting question was:
+
+```text
+Which business information must still exist after the Python process stops or restarts?
+```
+
+This prevents database design from becoming a mechanical class-to-table exercise.
+
+The first persistent requirement was inventory:
+
+```text
+The system must remember which products are stocked
+and how many units of each product are available.
+```
+
+Two concepts were distinguished:
+
+```text
+Inventory = the overall collection of stocked products
+InventoryProduct = one individual stocked product in that collection
+```
+
+The current requirements describe only one inventory. There is no warehouse, seller, shop, or location dimension yet. Therefore, a separate `inventories` table would add structure without solving a current requirement.
+
+One row in `inventory_products` can represent one stocked product, while all rows collectively represent the current inventory.
+
+Persistent fields derived so far:
+
+```text
+sku
+product_name
+category
+quantity
+```
+
+### Business identity versus database identity
+
+SKU was selected as the reliable business identifier because a product name is descriptive and may change or be duplicated.
+
+However, SKU was not selected as the primary key.
+
+The design separates:
+
+```text
+id  = stable internal database identity
+sku = unique business identity
+```
+
+Other tables should reference the stable internal `id`. If a SKU changes later, the relationships still point to the same product row.
+
+A foreign key could technically reference SKU, and PostgreSQL could restrict or cascade updates. The problem is not that consistency would be impossible. The problem is that relationships would become coupled to a mutable business value.
+
+Current table design:
+
+```text
+inventory_products
+------------------
+id            primary key
+sku           unique, not null
+product_name  not null
+category      nullable
+quantity      not null
+```
+
+The database must also protect the existing domain invariant:
+
+```sql
+CHECK (quantity >= 0)
+```
+
+Python validation gives fast domain feedback, while the PostgreSQL constraint protects stored data even if another service, script, migration, admin tool, direct SQL statement, or programming bug bypasses that Python object.
+
+## Project 04 DB Design 02: Persisting An Order With Multiple Items
+
+The order information that must survive a restart currently includes:
+
+```text
+order id
+status
+idempotency key
+created_at
+ordered items
+```
+
+`created_at` was added as a database-design requirement even though it is not yet present in the Python domain model. It supports history, ordering, operational queries, and possible expiry rules for idempotency records.
+
+The main pressure was this Python field:
+
+```python
+items: list[UserOrder]
+```
+
+Each item contains a product reference and requested quantity.
+
+PostgreSQL can technically store this information in JSON, arrays, or custom composite structures. The reason not to use one nested `orders.items` column here is relational protection and access—not an inability to store nested data.
+
+If items are embedded in one column, ordinary PostgreSQL constraints cannot cleanly protect every embedded value:
+
+```text
+Does every embedded product_id reference a real product?
+Is every embedded quantity greater than zero?
+```
+
+It also makes routine relational operations more specialized:
+
+```text
+find every order containing a product
+sum ordered quantities for a product
+update one item
+join item data with product data
+index common product lookups
+```
+
+The solution is a separate `order_items` table.
+
+Example Python representation:
+
+```python
+items = [
+    UserOrder("iphone", 2),
+    UserOrder("macbook", 1),
+]
+```
+
+Equivalent relational representation:
+
+```text
+orders
+------
+id
+1
+
+order_items
+------------------------------------
+id   order_id   product_id   quantity
+1    1          42           2
+2    1          81           1
+```
+
+Both item rows belong to order `1`. Each item row points to one inventory-product row.
+
+Proposed table shape:
+
+```sql
+CREATE TABLE order_items (
+    id BIGSERIAL PRIMARY KEY,
+    order_id BIGINT NOT NULL REFERENCES orders(id),
+    product_id BIGINT NOT NULL REFERENCES inventory_products(id),
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    UNIQUE (order_id, product_id)
+);
+```
+
+Constraint meanings:
+
+```text
+order_id foreign key
+  -> an item cannot belong to an order that does not exist
+
+product_id foreign key
+  -> an item cannot reference a product that does not exist
+
+quantity check
+  -> an ordered quantity must be greater than zero
+
+unique order_id + product_id
+  -> one product appears at most once in one order under the current model
+```
+
+The Python list has not disappeared. Its storage representation has changed:
+
+```text
+Python domain representation:
+one Order object containing a list of UserOrder objects
+
+Relational representation:
+one orders row connected to multiple order_items rows
+```
+
+The repository or ORM will query the related rows and reconstruct the list when loading an order.
+
+Current relationship model:
+
+```text
+orders             one -> many order_items
+inventory_products one -> many order_items
+```
+
+The larger relationship between orders and products is many-to-many, with `order_items` acting as the connecting record and carrying relationship-specific data such as `quantity`.
+
+Key lesson:
+
+```text
+Arrays and JSON conveniently store nested data.
+Separate relational rows let PostgreSQL directly protect identities,
+relationships, constraints, and common query paths.
+```
+
+Next database-design pressure:
+
+```text
+Derive the orders table and decide how PostgreSQL should protect
+order identity, lifecycle status, idempotency, and timestamps.
+```
