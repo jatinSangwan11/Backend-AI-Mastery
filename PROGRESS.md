@@ -1597,3 +1597,144 @@ Current resume point:
   - atomic conditional `UPDATE`
   - `SELECT ... FOR UPDATE` row locking
 - Begin with their behavior for one product, then consider a multi-product order and deadlock-safe locking order.
+
+Same-day continuation — atomic conditional inventory update:
+
+- Studied the first concurrency-safe approach in detail.
+- Replaced the unsafe application sequence:
+
+```text
+SELECT quantity
+-> check in Python
+-> calculate new value from the earlier read
+-> UPDATE later
+```
+
+- With one PostgreSQL statement that combines eligibility and mutation:
+
+```sql
+UPDATE inventory_products
+SET quantity = quantity - :requested_quantity
+WHERE id = :product_id
+  AND is_active = true
+  AND quantity >= :requested_quantity
+RETURNING id, quantity;
+```
+
+- Clarified that the application does not first read quantity into Python.
+- PostgreSQL internally finds the row, evaluates the conditions, obtains the required row-level update lock, and changes the current row value as one atomic statement.
+- For concurrent writers under normal `READ COMMITTED` behavior:
+  - the first updater controls the row
+  - a conflicting updater waits
+  - after the first transaction finishes, PostgreSQL re-evaluates the second updater's `WHERE` condition against the updated row version
+  - only a request whose condition still passes updates the row
+- Success is communicated by a returned row; no returned row means stock was not reserved.
+
+Production relevance:
+
+- Atomic conditional updates are a standard production-grade technique for simple state transitions such as inventory decrement, credit consumption, job claiming, capacity reservation, and expected-state updates.
+- They are strongest when the condition is simple, state is localized to one row, and immediate success/failure is sufficient.
+- Large systems may instead or additionally use explicit row locking, optimistic versioning, reservation records, queues, partitioning, or specialized services depending on workflow and scale.
+
+Limitations recorded:
+
+- One no-row result combines several possible failures:
+  - product missing
+  - product inactive
+  - insufficient inventory
+- A follow-up diagnostic read can improve the error message but is informational and may observe state that changes again.
+- A multi-product order needs a surrounding transaction so earlier successful decrements roll back if a later product fails.
+- Updating multiple product rows in inconsistent orders can deadlock; product rows should be processed in a stable order such as ascending `product_id`.
+- PostgreSQL can detect a deadlock and abort one transaction, so application error/retry handling is still required.
+- High contention on one popular product row causes writers to wait even though correctness is preserved.
+- Complex decisions spanning warehouses, reservations, promotions, or several related records may become unclear in one conditional statement.
+- The statement protects inventory reduction only; order and order-item insertion still require the surrounding Unit of Work/PostgreSQL transaction.
+- Concurrent idempotency enforcement still depends on the unique idempotency-key constraint and appropriate conflict handling.
+
+Updated resume point:
+
+- Atomic conditional `UPDATE` is understood.
+- Next: study `SELECT ... FOR UPDATE`, then compare when to choose explicit protected reads versus conditional mutation.
+
+Same-day continuation — `SELECT ... FOR UPDATE` and complete transactional workflows:
+
+- Studied explicit protected reads with:
+
+```sql
+SELECT ...
+FROM inventory_products
+WHERE id IN (...)
+ORDER BY id
+FOR UPDATE;
+```
+
+- `FOR UPDATE` returns current rows and holds row-level locks against conflicting writers/lockers until the surrounding transaction commits or rolls back.
+- It must use the same transaction and connection as the later validation and updates; using autocommit or a separate transaction would release the protection too early.
+- A competing order-placement transaction waits and, after the first transaction finishes, reads the resulting current inventory state before deciding.
+- Unlike atomic conditional update, protected reads give application/domain code the current locked state and make specific missing/inactive/insufficient-stock responses easier to produce.
+
+Atomic conditional update versus `SELECT ... FOR UPDATE`:
+
+- Both approaches can support one-product and multi-product orders.
+- Multi-product ordering does not technically require explicit locking; multiple conditional updates can run safely inside one transaction.
+- Atomic conditional update is smaller for simple predicates and coarse success/failure results.
+- `SELECT ... FOR UPDATE` is clearer when the application needs protected values for detailed or multi-step decisions.
+- Project 04 selects `SELECT ... FOR UPDATE` because it maps clearly to the current `InventoryService` validation workflow and supports detailed results.
+
+Explicit-lock limitations:
+
+- More database statements are required.
+- Locks are held longer and contending writers wait.
+- Slow network calls or external services must not run while the database transaction holds locks.
+- Multiple rows can deadlock when acquired in different orders.
+- Requested product rows must be locked in stable ascending `product_id` order.
+- Missing rows cannot be locked because they do not exist.
+- `FOR UPDATE` only protects the read; a later update is still required.
+- Application bugs can omit a validation, so database constraints remain essential.
+
+Shared transaction design:
+
+- Separate services and repositories retain separate responsibilities but share one PostgreSQL session/transaction supplied by `DatabaseUnitOfWork`.
+- Inventory repositories must not independently commit database changes.
+- The Unit of Work performs the only final commit or rollback across inventory, order, and order-item changes.
+- Current in-memory `InventoryRepository.commit(change_set)` is not a PostgreSQL transaction commit and should be renamed or removed during the database refactor to avoid semantic confusion.
+
+New order-placement transaction:
+
+```text
+BEGIN
+claim/insert order idempotency key
+lock all requested products in stable product_id order
+verify every requested product was returned
+verify every product is active
+verify every quantity is sufficient
+reduce inventory
+insert order_items
+COMMIT
+```
+
+- If any validation, update, or insert fails, rollback removes the uncommitted order and items and restores inventory automatically.
+- No manual compensating inventory update is required inside one PostgreSQL transaction.
+
+Concurrent idempotency design:
+
+- Use the unique `orders.idempotency_key` constraint as the final concurrency boundary.
+- Attempt the logical-operation claim with `INSERT ... ON CONFLICT (idempotency_key) DO NOTHING RETURNING ...`.
+- Returned row means this request owns the new operation and may continue.
+- No returned row means another committed order owns the key:
+  - same stored items -> return the existing order without repeating inventory changes
+  - different stored items -> return idempotency conflict
+- If the competing first transaction rolls back, its uncommitted key claim disappears and another request may proceed.
+
+Concurrent cancellation design:
+
+- Lock the `orders` row first with `SELECT ... FOR UPDATE`.
+- The order row is the concurrency gate controlling the `PLACED -> CANCELLED` transition.
+- A second cancellation waits, then sees `CANCELLED` after the first commits and must not restore inventory again.
+- Load order items, lock affected products in stable `product_id` order, restore quantities, set order status to `CANCELLED`, set `updated_at = now()`, and commit together.
+- Missing order, already-cancelled order, or any persistence failure ends without a partial inventory restoration.
+
+Updated resume point:
+
+- Transaction and concurrency design for order placement and cancellation is conceptually complete.
+- Next: consolidate the full PostgreSQL DDL and review final column types, constraints, foreign-key actions, and indexes before introducing SQLAlchemy.

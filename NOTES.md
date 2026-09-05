@@ -5562,3 +5562,797 @@ Next solution discussion:
 ```
 
 The comparison should begin with one product and then expand to multi-product ordering and lock ordering.
+
+## Project 04 DB Design 11: Atomic Conditional Inventory Update
+
+The first solution removes the unsafe gap between reading inventory, checking it in application code, and updating it later.
+
+Unsafe sequence:
+
+```sql
+SELECT quantity
+FROM inventory_products
+WHERE id = :product_id;
+```
+
+Then in Python:
+
+```python
+if quantity >= requested_quantity:
+    new_quantity = quantity - requested_quantity
+```
+
+Then later:
+
+```sql
+UPDATE inventory_products
+SET quantity = :new_quantity
+WHERE id = :product_id;
+```
+
+The decision uses an earlier value that may be stale by the time the final update runs.
+
+### Concurrency-safe statement
+
+The replacement is one conditional mutation:
+
+```sql
+UPDATE inventory_products
+SET quantity = quantity - :requested_quantity
+WHERE id = :product_id
+  AND is_active = true
+  AND quantity >= :requested_quantity
+RETURNING id, quantity;
+```
+
+The parameters represent caller/application input:
+
+```text
+product_id
+requested_quantity
+```
+
+The statement means:
+
+```text
+Find the requested product.
+Require it to be active.
+Require its current quantity to be sufficient.
+Subtract from the current stored quantity.
+Return the updated row if all conditions passed.
+```
+
+The application does not issue a separate preliminary `SELECT`. PostgreSQL reads and evaluates the row internally as part of executing the `UPDATE`.
+
+### How PostgreSQL protects concurrent updates
+
+Starting state:
+
+```text
+quantity = 1
+```
+
+Two transactions execute the same conditional update.
+
+Conceptual timeline:
+
+```text
+Transaction A                    Transaction B
+-------------                    -------------
+find eligible row
+condition passes
+obtain update control/row lock
+set quantity to 0
+
+                                 attempt conditional UPDATE
+                                 wait for conflicting row writer
+
+COMMIT
+
+                                 re-evaluate WHERE against current row
+                                 0 >= 1 is false
+                                 update zero rows
+```
+
+If A rolls back, its quantity change is undone. B can then continue against the restored/current row and may succeed.
+
+Under PostgreSQL's normal `READ COMMITTED` behavior, when a target row was concurrently updated, the later updater waits and then re-evaluates its search condition against the updated row version.
+
+The safety comes from the combination:
+
+```text
+one SQL statement
++ automatic row-level update locking
++ condition re-evaluation after a conflicting update
+```
+
+### Why the assignment uses the database value
+
+The statement uses:
+
+```sql
+SET quantity = quantity - :requested_quantity
+```
+
+The right-side `quantity` is the current row value PostgreSQL is safely modifying.
+
+It does not use:
+
+```text
+a quantity previously returned to Python
+-> a new value calculated from that stale read
+-> a later absolute write
+```
+
+This distinction prevents two callers from independently calculating the same replacement value from one stale starting value.
+
+### Reading the result
+
+`RETURNING` lets the application observe whether the operation succeeded:
+
+```text
+one row returned
+  -> inventory was reduced
+
+no row returned
+  -> inventory was not reduced
+```
+
+The returned row can contain the product id and remaining quantity:
+
+```text
+id   quantity
+42   0
+```
+
+The application should continue order creation only when every required inventory update succeeds.
+
+## Project 04 DB Design 12: Atomic Update Limitations And Tradeoffs
+
+Atomic conditional update is production-grade, but it does not solve every part of order placement.
+
+### Limitation 1: no-row result combines failure reasons
+
+All these conditions return no updated row:
+
+```text
+product does not exist
+product exists but is inactive
+product exists but has insufficient inventory
+```
+
+The application immediately knows only:
+
+```text
+inventory was not reserved
+```
+
+A diagnostic `SELECT` can classify the response afterward:
+
+```text
+missing row
+  -> Product not found
+
+is_active = false
+  -> Product is inactive
+
+quantity too small
+  -> Only N units available
+```
+
+That diagnostic read does not decide or authorize inventory reduction. The atomic update already made the correctness decision. Because other transactions can continue changing inventory, a reported available quantity is informational rather than a permanent promise.
+
+### Limitation 2: multiple products still require one transaction
+
+Example order:
+
+```text
+iPhone x1
+MacBook x2
+AirPods x1
+```
+
+Possible execution:
+
+```text
+iPhone conditional update  -> succeeds
+MacBook conditional update -> succeeds
+AirPods conditional update -> fails
+```
+
+Without a surrounding transaction, the first two reductions would remain even though the order failed.
+
+Required behavior:
+
+```text
+BEGIN
+perform every product decrement
+if any decrement fails -> ROLLBACK
+otherwise insert order and items -> COMMIT
+```
+
+The individual statement gives concurrency-safe mutation. The transaction gives all-or-nothing behavior across all products and order records.
+
+### Limitation 3: multiple-row updates can deadlock
+
+Two transactions can acquire product rows in opposite orders:
+
+```text
+Transaction A: iPhone, then MacBook
+Transaction B: MacBook, then iPhone
+```
+
+Possible wait cycle:
+
+```text
+A controls iPhone and waits for MacBook
+B controls MacBook and waits for iPhone
+```
+
+PostgreSQL detects the deadlock and aborts one transaction, but that still produces an error the application must handle.
+
+A common prevention rule is:
+
+```text
+process every requested product in ascending product_id order
+```
+
+Both transactions then request shared rows in the same order, reducing the chance of a circular wait.
+
+### Limitation 4: hot rows create contention
+
+When many requests update one popular product, they serialize around that row:
+
+```text
+A updates product 42
+B waits
+C waits
+D waits
+```
+
+Correctness is preserved, but latency and throughput for that hot product can suffer. An index helps locate a row; it cannot remove contention among writers modifying the same row.
+
+### Limitation 5: complex decisions may not fit cleanly
+
+The approach is excellent for a compact predicate:
+
+```text
+product active
+AND sufficient quantity
+```
+
+It can become difficult to understand if eligibility depends on:
+
+```text
+multiple warehouses
+expiring reservations
+allocation priority
+promotions
+several related records
+complex domain policy
+```
+
+An explicitly protected read using `SELECT ... FOR UPDATE` can be clearer when the application needs to inspect several current values before deciding.
+
+### Limitation 6: it protects only the inventory mutation
+
+The atomic update does not by itself guarantee this complete workflow:
+
+```text
+inventory reduced
+order inserted
+order items inserted
+```
+
+Those operations still belong in one PostgreSQL transaction coordinated by the database-backed Unit of Work.
+
+### Limitation 7: idempotency remains a separate boundary
+
+Concurrency-safe stock reduction does not prevent two requests with the same idempotency key from attempting to create duplicate orders.
+
+The design still requires:
+
+```text
+UNIQUE(orders.idempotency_key)
+```
+
+plus application behavior for interpreting the conflicting insert and returning the already-created result where appropriate.
+
+### Production use
+
+Atomic conditional updates are commonly used for simple production operations such as:
+
+```text
+decrement inventory if sufficient
+consume credits if balance is sufficient
+claim an available job
+reserve limited capacity
+change state if the expected current state still matches
+```
+
+They are strongest when:
+
+```text
+the condition is simple
+the relevant state is localized to one row
+the mutation is easy to express in SQL
+immediate success or failure is sufficient
+```
+
+Depending on requirements and scale, production systems may instead or additionally use:
+
+```text
+SELECT ... FOR UPDATE
+optimistic version checks
+reservation records with expiry
+queues or partitioned processing
+distributed inventory services
+specialized datastores
+```
+
+Interview-ready summary:
+
+```text
+I would use an atomic conditional UPDATE for a simple inventory decrement.
+It prevents overselling by making eligibility and mutation one database action.
+I would still wrap all order changes in one transaction, acquire multiple product
+rows in a stable order, and consider explicit locking or reservations when the
+business decision spans more state or contention becomes significant.
+```
+
+Next comparison:
+
+```text
+SELECT ... FOR UPDATE
+-> protected read before a more involved application decision
+```
+
+## Project 04 DB Design 13: Protected Reads With SELECT FOR UPDATE
+
+An ordinary `SELECT` reads a row but does not reserve it for a later application decision:
+
+```sql
+SELECT id, quantity, is_active
+FROM inventory_products
+WHERE id = 42;
+```
+
+Another transaction can update the row between that read and the later write.
+
+A protected read uses:
+
+```sql
+SELECT id, quantity, is_active
+FROM inventory_products
+WHERE id = 42
+FOR UPDATE;
+```
+
+This tells PostgreSQL to return the row and hold a row-level lock against conflicting writers and lockers until the current transaction ends.
+
+It must run inside the same transaction as the business decision and update:
+
+```sql
+BEGIN;
+
+SELECT ... FOR UPDATE;
+-- inspect protected state
+-- make business decision
+UPDATE ...;
+-- insert related records
+
+COMMIT;
+```
+
+Unsafe misuse:
+
+```text
+SELECT FOR UPDATE
+-> transaction/autocommit statement ends
+-> lock is released
+-> application later validates and updates in another transaction
+```
+
+The later work would no longer be protected.
+
+### Concurrent behavior
+
+Starting quantity:
+
+```text
+1
+```
+
+Conceptual timeline:
+
+```text
+Transaction A                    Transaction B
+-------------                    -------------
+BEGIN                            BEGIN
+
+SELECT FOR UPDATE
+lock product 42
+read quantity 1
+
+                                 SELECT FOR UPDATE
+                                 wait for A
+
+validate
+update quantity to 0
+insert order and items
+COMMIT
+release lock
+
+                                 acquire lock
+                                 read current quantity 0
+                                 reject order
+                                 ROLLBACK
+```
+
+The second workflow does not make its business decision from the old quantity. It waits and then receives the current row after the first transaction's result is known.
+
+### Why it fits detailed domain validation
+
+Application code receives protected state and can distinguish:
+
+```text
+missing product
+inactive product
+insufficient quantity
+```
+
+It can also evaluate more involved rules before updating:
+
+```text
+warehouse allocation
+special approval
+reservation policy
+related-record state
+```
+
+This maps naturally to Project 04's `InventoryService`, which owns detailed inventory validation.
+
+### Limitations
+
+```text
+More statements
+  -> protected SELECT followed by validation and UPDATE
+
+Longer lock duration
+  -> competing writers wait until commit/rollback
+
+Transaction discipline
+  -> read, validation, and write must share one transaction/connection
+
+Deadlock risk
+  -> multiple rows acquired in inconsistent orders can create wait cycles
+
+Missing-row limitation
+  -> a row that does not exist cannot be locked
+
+Application correctness
+  -> FOR UPDATE does not perform the business checks or mutation itself
+```
+
+Ordinary non-locking readers can generally still read an MVCC-visible row version. The row lock primarily blocks conflicting writers and lockers.
+
+Slow external work must not occur while locks are held:
+
+```text
+payment-provider call
+email delivery
+AI-model request
+user interaction
+```
+
+Database transactions should remain focused and short.
+
+## Project 04 DB Design 14: Choosing Between The Two Inventory Approaches
+
+Both approaches support one or many requested products.
+
+### Atomic conditional update
+
+```text
+database evaluates simple eligibility and mutates in one statement
+```
+
+Best fit:
+
+```text
+simple SQL predicate
+localized row state
+coarse success/failure result
+short mutation path
+```
+
+### SELECT FOR UPDATE
+
+```text
+database protects current state
+application evaluates the protected values
+application later mutates inside the same transaction
+```
+
+Best fit:
+
+```text
+detailed failure reasons
+several current values needed for a decision
+complex or evolving domain validation
+clear mapping to service-owned business rules
+```
+
+Multi-product ordering does not force `SELECT ... FOR UPDATE`. Multiple atomic conditional updates can execute inside one transaction and roll back together if any item fails.
+
+Project 04 chooses `SELECT ... FOR UPDATE` because the learning workflow already has detailed inventory validation and should keep that decision visible inside `InventoryService`.
+
+The choice is contextual, not a universal ranking.
+
+## Project 04 DB Design 15: One Transaction Across Separate Repositories
+
+Separate code responsibilities do not imply separate transactions.
+
+```text
+OrderService
+  -> order-placement orchestration
+
+InventoryService
+  -> inventory business rules
+
+InventoryRepository
+  -> inventory queries, locks, and updates
+
+OrderRepository
+  -> order and order-item persistence
+
+DatabaseUnitOfWork
+  -> shared PostgreSQL transaction
+```
+
+Both database repositories use the same session or connection:
+
+```text
+DatabaseUnitOfWork
+|
+|-- InventoryRepository --\
+|                          +-- same PostgreSQL transaction
+|-- OrderRepository ------/
+```
+
+Only Unit of Work performs the final database commit.
+
+If inventory repository committed independently:
+
+```text
+inventory commit succeeds
+order insertion later fails
+-> inventory reduced with no order
+```
+
+Therefore, repository operations add, update, query, and lock through the shared session but do not finalize the database transaction.
+
+Important current-code distinction:
+
+```text
+InventoryRepository.commit(change_set)
+  -> currently copies a Python change set into an in-memory dictionary
+  -> not a PostgreSQL transaction commit
+```
+
+That method should be renamed or removed during the database refactor so database commit ownership remains unambiguous.
+
+## Project 04 DB Design 16: Complete Order-Placement Transaction
+
+A successful new order uses this transaction boundary:
+
+```text
+BEGIN
+
+claim new idempotency key/order operation
+lock requested product rows in ascending product_id order
+verify every requested product exists
+verify every product is active
+verify every quantity is sufficient
+reduce every product quantity
+insert order_items
+
+COMMIT
+```
+
+One possible new-order insert is:
+
+```sql
+INSERT INTO orders (
+    order_number,
+    status,
+    idempotency_key
+)
+VALUES (
+    :order_number,
+    'PLACED',
+    :idempotency_key
+)
+RETURNING id, order_number;
+```
+
+The returned internal `id` is used by the `order_items` foreign keys.
+
+Lock all requested products in stable order:
+
+```sql
+SELECT id, sku, product_name, quantity, is_active
+FROM inventory_products
+WHERE id IN (...)
+ORDER BY id
+FOR UPDATE;
+```
+
+The application compares requested and returned ID sets to detect missing products, then validates active status and quantity while the rows remain protected.
+
+After validation, inventory is reduced and item rows are inserted:
+
+```sql
+INSERT INTO order_items (order_id, product_id, quantity)
+VALUES
+    (:order_id, :product_1, :quantity_1),
+    (:order_id, :product_2, :quantity_2);
+```
+
+If any validation, update, or insert fails:
+
+```sql
+ROLLBACK;
+```
+
+PostgreSQL reverses every uncommitted database change:
+
+```text
+remove uncommitted order
+remove uncommitted order items
+undo inventory reductions
+release row locks
+```
+
+Manual inventory compensation is not required because every change was inside one database transaction.
+
+The temporary `PLACED` row is not visible as a committed order while its transaction is incomplete. If the workflow fails, rollback removes it.
+
+## Project 04 DB Design 17: Concurrent Idempotency Claim
+
+Two requests can arrive together with the same idempotency key. An application-only preliminary lookup is not a sufficient concurrency guarantee because both callers may observe the key as missing.
+
+The database unique constraint is authoritative:
+
+```sql
+UNIQUE (idempotency_key)
+```
+
+The request can attempt to claim the logical operation with:
+
+```sql
+INSERT INTO orders (
+    order_number,
+    status,
+    idempotency_key
+)
+VALUES (
+    :order_number,
+    'PLACED',
+    :idempotency_key
+)
+ON CONFLICT (idempotency_key) DO NOTHING
+RETURNING id, order_number;
+```
+
+Decision:
+
+```text
+row returned
+  -> this request owns the new logical operation
+  -> continue order placement
+
+no row returned
+  -> another committed order owns the key
+  -> load that order and its items
+```
+
+Then:
+
+```text
+same key + same requested items
+  -> safe retry; return existing order
+
+same key + different requested items
+  -> idempotency conflict
+```
+
+When two inserts compete, PostgreSQL may wait for the first transaction to finish. If the first commits, the conflict remains. If the first rolls back, its uncommitted key claim disappears and another request may proceed.
+
+Claiming the key early avoids letting identical requests both perform inventory work before discovering the duplicate.
+
+If later inventory validation fails, rolling back the shared transaction also removes the uncommitted order and frees the key for a valid later retry.
+
+## Project 04 DB Design 18: Transactional And Concurrent Cancellation
+
+Cancellation changes two business areas:
+
+```text
+restore inventory
+change order status to CANCELLED
+```
+
+Without concurrency protection, two cancellation requests can both read `PLACED`, restore the same quantities twice, and both write `CANCELLED`.
+
+Example failure:
+
+```text
+inventory before cancellation = 3
+ordered quantity              = 2
+
+Request A restores 2
+Request B restores 2
+
+incorrect final inventory = 7
+```
+
+The `orders` row becomes the concurrency gate:
+
+```sql
+BEGIN;
+
+SELECT id, status
+FROM orders
+WHERE order_number = :order_number
+FOR UPDATE;
+```
+
+Decision while the row is locked:
+
+```text
+no row
+  -> Order not found
+
+status = CANCELLED
+  -> Order already cancelled
+
+status = PLACED
+  -> continue cancellation
+```
+
+The workflow then:
+
+```text
+load order_items
+lock affected inventory_products in ascending product_id order
+restore each product quantity
+set order status to CANCELLED
+set updated_at to now()
+commit
+```
+
+Competing cancellation behavior:
+
+```text
+A locks PLACED order
+B waits for the same order lock
+A restores inventory, sets CANCELLED, commits
+B acquires lock and sees CANCELLED
+B returns already-cancelled without restoring inventory
+```
+
+If restoration or status persistence fails, rollback keeps the order `PLACED` and removes all uncommitted inventory restorations.
+
+Final cancellation invariant:
+
+```text
+one PLACED -> CANCELLED transition
+produces exactly one inventory restoration
+```
+
+Next database-design checkpoint:
+
+```text
+Consolidate the final PostgreSQL DDL:
+types, tables, constraints, foreign-key actions, and indexes.
+```
