@@ -1551,3 +1551,49 @@ LLD curriculum lock:
 - Locked the core LLD, persistence, and advanced distributed-backend pattern lists.
 - Recorded which patterns are complete, which remain, their likely project pressures, SOLID coverage, curriculum placement, and the standard for considering a pattern learned.
 - Linked the catalog from `ROADMAP.md`.
+
+## 2026-09-06
+
+Resumed Project 04 database design from the completed index checkpoint.
+
+Concurrent inventory pressure:
+
+- Examined two independent order-placement requests attempting to purchase the final product unit.
+- Starting state:
+
+```text
+available quantity = 1
+Request A reads 1
+Request B reads 1
+both checks pass
+both orders may be created
+```
+
+- If both workflows calculate the new value from the same stale read and write `0`, the final quantity still passes `CHECK (quantity >= 0)` even though two orders consumed one available unit.
+- Identified this as a lost-update/concurrent-write problem and both a business-correctness and data-consistency failure.
+
+Connection to the existing implementation:
+
+- `InventoryService` change sets protect one multi-item request from partially updating inventory.
+- `InMemoryUnitOfWork` snapshots protect one workflow's group of changes from partial failure.
+- They do not isolate multiple workflows running concurrently.
+- Two requests can copy the same starting inventory and independently approve the same final unit.
+- An overlapping snapshot rollback can also overwrite another request's successful inventory change.
+
+Responsibility clarification:
+
+- Unit of Work is the application-level pattern that defines and coordinates one transaction boundary.
+- A database-backed Unit of Work will call PostgreSQL begin/commit/rollback mechanisms.
+- PostgreSQL provides the actual storage-level atomicity and isolation mechanisms.
+- Each order-placement request runs in its own transaction.
+- Atomicity protects each request from partial completion.
+- Isolation/concurrency control protects different requests from interfering incorrectly.
+- Merely wrapping a separated read-in-Python/check/update sequence in a transaction is not automatically sufficient under normal PostgreSQL concurrency.
+- PostgreSQL supplies transactions, row locks, isolation levels, atomic statements, and constraints; application design must choose the boundary, statements, locking approach, and error/retry behavior.
+
+Current resume point:
+
+- Compare the two main concurrency-safe inventory approaches:
+  - atomic conditional `UPDATE`
+  - `SELECT ... FOR UPDATE` row locking
+- Begin with their behavior for one product, then consider a multi-product order and deadlock-safe locking order.

@@ -5321,3 +5321,244 @@ Next database-design topic:
 Define the PostgreSQL transaction boundary for order placement
 and protect the final inventory units from concurrent buyers.
 ```
+
+## Project 04 DB Design 10: Atomicity Does Not Automatically Solve Concurrency
+
+The next pressure is two order-placement workflows attempting to purchase the same final inventory unit.
+
+Starting database state:
+
+```text
+inventory_products
+-------------------------
+id   product_name   quantity
+42   iphone         1
+```
+
+Possible interleaving:
+
+```text
+Request A reads quantity 1
+Request B reads quantity 1
+
+Request A checks 1 >= 1 -> allowed
+Request B checks 1 >= 1 -> allowed
+
+Request A calculates 1 - 1 -> 0
+Request B calculates 1 - 1 -> 0
+
+Request A writes 0
+Request B writes 0
+```
+
+Final state:
+
+```text
+starting inventory = 1
+successful orders  = 2
+stored quantity    = 0
+```
+
+The quantity looks valid and still satisfies:
+
+```sql
+CHECK (quantity >= 0)
+```
+
+But two units were sold when only one existed. This is a business-correctness failure and a data-consistency failure.
+
+When both workflows write a value calculated from the same stale value, one update effectively hides the other inventory consumption. This is the lost-update pressure.
+
+### Connection to the current pure-Python design
+
+The current inventory change-set flow can behave conceptually like:
+
+```text
+real inventory = 1
+
+Request A's copy = 1
+Request B's copy = 1
+
+A validates and changes its copy to 0
+B validates and changes its copy to 0
+
+A commits its copy -> real inventory becomes 0
+B commits its stale copy -> real inventory remains 0
+
+A saves an order
+B saves an order
+```
+
+The change set solves a different problem:
+
+```text
+one order contains multiple products
+one product fails validation
+-> do not partially update the other products
+```
+
+It does not isolate multiple order workflows from one another.
+
+The snapshot-based `InMemoryUnitOfWork` also solves a different problem:
+
+```text
+one order workflow changes inventory
+then order saving fails
+-> restore that workflow's starting state
+```
+
+It is not concurrency-safe. An overlapping rollback can even overwrite another successful workflow:
+
+```text
+A snapshots quantity 1
+B successfully reduces quantity to 0
+A fails and restores its snapshot
+final quantity becomes 1 even though B has a successful order
+```
+
+The in-memory Unit of Work teaches transaction ownership and rollback, but it does not provide database-grade concurrent isolation.
+
+### Unit of Work versus PostgreSQL transaction
+
+Unit of Work is the application-level pattern that coordinates the transaction boundary:
+
+```text
+begin
+perform related repository changes
+commit on success
+rollback on failure
+```
+
+A future database implementation maps that contract to PostgreSQL:
+
+```text
+DatabaseUnitOfWork.begin()
+  -> begin PostgreSQL transaction
+
+DatabaseUnitOfWork.commit()
+  -> commit PostgreSQL transaction
+
+DatabaseUnitOfWork.rollback()
+  -> roll back PostgreSQL transaction
+```
+
+Precise distinction:
+
+```text
+Unit of Work
+  -> application-level transaction coordinator
+
+PostgreSQL transaction
+  -> database mechanism providing atomicity and isolation
+```
+
+The Unit of Work does not manufacture storage-level atomicity itself. It uses the transaction mechanism supplied by the persistence implementation.
+
+### One request, one transaction
+
+Two concurrent order requests normally use two transactions:
+
+```text
+Request A -> Transaction A
+Request B -> Transaction B
+```
+
+Each transaction includes the complete order-placement state change:
+
+```text
+reduce inventory
+insert order
+insert order items
+```
+
+Atomicity protects each transaction individually:
+
+```text
+Transaction A
+  -> all A changes or no A changes
+
+Transaction B
+  -> all B changes or no B changes
+```
+
+Atomicity alone does not define how A and B interact while accessing the same product row.
+
+### Atomicity versus isolation
+
+```text
+Atomicity
+  -> one workflow cannot remain partially completed
+
+Isolation
+  -> concurrent workflows cannot interfere in a way that produces an invalid result
+```
+
+For Project 04:
+
+```text
+Atomicity problem
+  -> inventory reduced but order/items missing
+
+Isolation problem
+  -> two orders consume the same final inventory unit
+```
+
+Both properties are required.
+
+### PostgreSQL responsibility versus application responsibility
+
+PostgreSQL supplies mechanisms such as:
+
+```text
+transactions
+commit and rollback
+row locks
+isolation levels
+atomic SQL statements
+unique constraints
+check constraints
+conflict detection
+```
+
+The application must still decide:
+
+```text
+which operations belong in one transaction
+which SQL statements perform those operations
+whether rows should be locked
+how concurrent conflicts are interpreted
+how failures are mapped to business results
+whether and when a failed transaction is safe to retry
+```
+
+Simply writing this is not guaranteed to be safe:
+
+```sql
+BEGIN;
+
+SELECT quantity FROM inventory_products WHERE id = 42;
+-- application checks the returned value
+UPDATE inventory_products SET quantity = 0 WHERE id = 42;
+
+COMMIT;
+```
+
+Under ordinary concurrency, both transactions may read the same committed value before either safely reserves it.
+
+Key takeaway:
+
+```text
+Unit of Work defines and coordinates one transaction boundary.
+PostgreSQL implements the database transaction.
+Atomicity protects one workflow from partial completion.
+Isolation and concurrency control protect multiple workflows from unsafe interference.
+```
+
+Next solution discussion:
+
+```text
+1. Atomic conditional UPDATE
+2. SELECT ... FOR UPDATE row locking
+```
+
+The comparison should begin with one product and then expand to multi-product ordering and lock ordering.
