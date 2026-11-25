@@ -1738,3 +1738,36 @@ Updated resume point:
 
 - Transaction and concurrency design for order placement and cancellation is conceptually complete.
 - Next: consolidate the full PostgreSQL DDL and review final column types, constraints, foreign-key actions, and indexes before introducing SQLAlchemy.
+
+## 2026-11-25
+
+Temporarily paused the existing Phase 2 Project 04 sequence to start an accelerated interview-preparation track.
+
+Target:
+
+```text
+Backend / AI Software Engineer
+~2 years of experience
+Python and FastAPI interviews
+Production-oriented readiness
+```
+
+Added `FASTAPI_INTERVIEW_ROADMAP.md` with:
+
+- Six-week accelerated default schedule
+- Pair-coding protocol
+- Day 1 diagnostic
+- Python, HTTP, FastAPI, async, PostgreSQL, SQLAlchemy, testing, security, reliability, observability, Redis, workers, deployment, and AI-backend coverage
+- One incremental AI Processing Jobs API capstone
+- Continuous DSA and SQL practice
+- Weekly mock interviews
+- Production review checklist
+- Quantified scoring rubric and exit criteria
+- A continuous production-scenario track covering slow APIs, event-loop blocking, DB-pool exhaustion, query regressions, downstream failures, retry storms, cache failures, queue backlogs, duplicates, memory growth, noisy neighbors, AI-provider degradation, and security incidents
+- An evidence-first incident method: clarify, observe, isolate, mitigate, validate, root-cause, and prevent
+- An explicit integration-engineering lane covering outbound HTTP APIs, timeout/retry/circuit-breaker behavior, contract tests, signed and idempotent webhooks, and an OpenAI provider adapter with server-side secret handling, streaming, cancellation, rate limits, usage/cost accounting, and verified webhook events
+
+Current interview-track resume point:
+
+- Run the Day 1 Python job-scheduler diagnostic without prior revision.
+- Use the result to compress strong topics and focus time on demonstrated gaps.

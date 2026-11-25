@@ -2,6 +2,8 @@
 
 This repo is our long-running coaching workspace for Python OOP, LLD, FastAPI, advanced backend engineering, and AI backend systems.
 
+Current active track: [Python FastAPI Backend Interview Sprint](FASTAPI_INTERVIEW_ROADMAP.md).
+
 The operating style is project-first:
 
 1. Learn the smallest useful concept.
@@ -31,6 +33,7 @@ Read /Users/jatin.sangwan/dev/backend-ai-mastery/ROADMAP.md and PROGRESS.md, the
 backend-ai-mastery/
   README.md
   ROADMAP.md
+  FASTAPI_INTERVIEW_ROADMAP.md
   PROGRESS.md
   NOTES.md
   references/

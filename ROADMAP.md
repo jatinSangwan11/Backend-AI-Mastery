@@ -1,5 +1,11 @@
 # Roadmap
 
+## Active Interview Sprint
+
+Status: active as of 2026-11-25.
+
+The project curriculum below is temporarily paused while the accelerated Python/FastAPI backend interview track runs. The dedicated plan, pair-coding protocol, capstone, scoring rubric, and exit criteria are in `FASTAPI_INTERVIEW_ROADMAP.md`.
+
 ## Phase 1: OOP And LLD Foundations
 
 Status: done.
@@ -28,7 +34,7 @@ Core topics covered:
 
 ## Phase 2: Advanced OOP, LLD, DB Design, And FastAPI
 
-Status: next.
+Status: paused during the active interview sprint.
 
 Goal: go deeper on production-style object design, SOLID, design patterns, database design, ORM boundaries, and thin FastAPI APIs, while building enough LLD judgment and vocabulary to be ready for Big Tech LLD interviews.
 
